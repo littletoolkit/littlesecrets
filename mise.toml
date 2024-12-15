@@ -1,0 +1,9 @@
+[tools]
+python = "3.10"
+# "pipx:Aider-AI/aider" = "latest"
+
+[tasks.prep]
+run = """
+#!/usr/bin/env bash
+python -m pip install aider-chat
+"""
