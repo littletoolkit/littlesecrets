@@ -298,8 +298,8 @@ pub const KeyPair = struct {
 };
 fn RSA_key_gen() KeyPair {
     var out = KeyPair{
-        .public = 0,
-        .private = 0,
+        .pub = 0,
+        .priv = 0,
     };
 
 
@@ -307,7 +307,7 @@ fn RSA_key_gen() KeyPair {
     const q = prime_gen();
     var temp: twice_RSA_output_bits = p;
     temp *= q;
-    out.pub = @truncate(temp);
+    out.public = @truncate(temp);
     var i: RSA_output_bits = 0;
     var d: RSA_output_bits = 0;
     temp = (p - 1);
@@ -320,7 +320,7 @@ fn RSA_key_gen() KeyPair {
             i += 1;
         }
     }
-    out.priv = d;
+    out.private = d;
 
     return out;
 }
