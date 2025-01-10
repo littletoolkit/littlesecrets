@@ -268,9 +268,6 @@ pub const KeyPair = struct {
     public: RSA_output_bits,
     /// Private exponent d 
     private: RSA_output_bits,
-    /// Public exponent, fixed to 65537
-    pub const e: u32 = RSA_E;
-
     /// Generate a new RSA key pair
     pub fn generate() KeyPair {
         return RSA_key_gen();
