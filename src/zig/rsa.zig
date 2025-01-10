@@ -1,5 +1,10 @@
 // FROM: https://raw.githubusercontent.com/shinymonitor/NO_HEAP_ZIG_RSA/refs/heads/main/rsa.zig
+//! RSA implementation for shared secrets
+//! Provides RSA encryption, decryption, signing and verification
+//! Uses OAEP+ padding for encryption and SHA256 for hashing
 const std = @import("std");
+
+// Configuration
 const SHA = std.crypto.hash.sha2.Sha256; //The SHA hashing function import. You might need to modify hash_bytes() function if you use a hash outside of the standard library
 const hash_output_bytes = 32; //The number of bytes in the hash function output
 const RSA_output_bytes = 256; //The number of bytes in RSA modulus
@@ -258,13 +263,45 @@ fn prime_gen() half_RSA_output_bits {
         }
     }
 }
-const keys = struct {
-    public_key: RSA_output_bits = 0,
+/// RSA key pair containing public and private components
+pub const KeyPair = struct {
+    /// The public modulus n = p*q 
+    pub: RSA_output_bits,
+    /// Public exponent, fixed to 65537
     e: u32 = e,
-    private_key: RSA_output_bits = 0,
+    /// Private exponent d
+    priv: RSA_output_bits,
+
+    /// Generate a new RSA key pair
+    pub fn generate() KeyPair {
+        return RSA_key_gen();
+    }
+
+    /// Encrypt a message using this public key
+    pub fn encrypt(self: KeyPair, message: []const u8) OAEP_PLUS_encode_error!RSA_output_bits {
+        return RSA_encrypt(message, self.pub);
+    }
+
+    /// Decrypt a message using this private key
+    pub fn decrypt(self: KeyPair, cipher: RSA_output_bits) OAEP_PLUS_decode_error![max_message_len]u8 {
+        return RSA_decrypt(cipher, self.pub, self.priv);
+    }
+
+    /// Sign a message using this private key
+    pub fn sign(self: KeyPair, message: []const u8) RSA_output_bits {
+        return RSA_sign(message, self.priv, self.pub);
+    }
+
+    /// Verify a signature using this public key
+    pub fn verify(self: KeyPair, signature: RSA_output_bits, message: []const u8) bool {
+        return RSA_verify(signature, message, self.pub);
+    }
 };
-pub fn RSA_key_gen() keys {
-    var out: keys = keys{};
+fn RSA_key_gen() KeyPair {
+    var out = KeyPair{
+        .pub = 0,
+        .priv = 0,
+    };
 
     // const p: half_RSA_output_bits = 26141749901051065198158178257821596557683032608480639581216436750318534601552613888423069948261950628929804543205693935725237742132552563654177510805790073659732241011367018800637300294870707999761242533695030250418227355447959171890605183760744716333330148786915077838055454357916713569756854701384342164929036515605675902927778492747807472749474784704051247626410415312934675826425299294603369763904348940016322200572877052106660515058534462791443448421227487586361832092469021659852899136456358392395331300101430277376669142963781403074071303064074215077312116409600373610790841052836710438995880733361499653110983;
     // const q: half_RSA_output_bits = 26456368321954397304300685291463000405420764390092749971660967338033361048429160998501209976815151073265256405140877791384358019496572020197666513598672983593507606718210123684056265488864157015989917272935410367702603932174460490362266566577038442250950406383556892742726815633552501226003517746631626296244164260660625784270048930653399568118242292020316599453402379793684354050694228157378570448049537436436819095024244851181716334602694975773457987237333726570211008355461047441564117236611729516116231799167231663434832590141666748208548931312148160006561129498662101116019697941729672180847945661445344477313283;
@@ -273,7 +310,7 @@ pub fn RSA_key_gen() keys {
     const q = prime_gen();
     var temp: twice_RSA_output_bits = p;
     temp *= q;
-    out.public_key = @truncate(temp);
+    out.pub = @truncate(temp);
     var i: RSA_output_bits = 0;
     var d: RSA_output_bits = 0;
     temp = (p - 1);
@@ -286,7 +323,7 @@ pub fn RSA_key_gen() keys {
             i += 1;
         }
     }
-    out.private_key = d;
+    out.priv = d;
 
     // out.public_key = 691615763962621901547123457887103050280707416788830115710300205416176911148156804581777080206584693663524018232449819201603915609785141383204753166678219220062761890150010768170447095564476421413204657321243218221094806285151911949334099384345856991967768413246050484936236820664165972703974004732057338932116972516931045214219625481041894538942481135911909191914151185020205073145507772743691701185189524738233519630076171910507690272425652734123094517884489293338167576446444558472228970906925954341063500258324931154273187816557868349873870167467853695566047226231931199493647333696212723358723766075001721037828324917936868308562470742862941277984440332345075405542007712998713337208935394234840799847177318173722709465250724104812262776804617619842082847769894771937707007137970761871411700855025055452156059190697014065673398992079682208758093261998900271592241197965763553644504665119836971072414824966227491820579512205956739611652946655636887143182732232764079852152063506410316959369074452376245510414270731698597853601663527957137919267691077971433166358372726916317864263132979048124501904672803004038160452869994535583737760500583317540725954080641006703214232407959244442962456288679023389674603205034845842916459087189;
     // out.private_key = 141379318397351810656984801948723920298619669236003434093273904084113128136043101011368655012094162702141252609367688906173423522960946322089721503486398567087001557018778617592802229874380740919979596169075413804538003262312589291319848779347261029973788751884543667648668152134486344146285910880805837460878146402937656785249558609175248502955771850676897743932036611772215502158023217899007243553686986937426407410838617499810359439395859891039368559075003479909843767973099436194095724907153012959202095197533898449330880223056071566950886348681917633695444324424816245473799431306409537434377867374258785979580776725645214018426694464207086905647375260247777367293993277575433586039063195915681249843210373890197275302110852675751740195102505712360567629845405399515867969549832326041982927455543677188548738982404419937208989754186661351519248267515449160894543566573839442073722603392577935950478700708956217678423324040654939971826771702268582191532913604783000464214624815651662006645470904499371147610768961752145049391451381195349777225759532174077264380709918134081883087825946250035677561272764878647565882748500478980595903470369353058642032341350193456395655475831279503333904692290491877041101989564820155488670325117;
@@ -326,20 +363,21 @@ pub fn RSA_verify(inp: RSA_output_bits, message: []const u8, public_key: RSA_out
     }
     return true;
 }
-pub fn main() anyerror!u8 {
-    // std.debug.print("GENERATING KEYS.....\n", .{});
-    // const alice_keys = RSA_key_gen();
-    // std.debug.print("ALICE'S KEYS:\nPublic Key: {any}\nPrivate Key: {any}\n", .{ alice_keys.public_key, alice_keys.private_key });
-    // std.debug.print("GENERATING KEYS.....\n", .{});
-    // const bob_keys = RSA_key_gen();
-    // std.debug.print("BOB'S KEYS:\nPublic Key: {any}\nPrivate Key: {any}\n", .{ bob_keys.public_key, bob_keys.private_key });
-    // const alice_signature = RSA_sign("SIGNED DATA", alice_keys.private_key, alice_keys.public_key);
-    // std.debug.print("ALICE'S SIGNATURE FOR \"SIGNED DATA\": {any}\n", .{alice_signature});
-    // const bob_verify = RSA_verify(alice_signature, "SIGNED DATA", alice_keys.public_key);
-    // std.debug.print("BOB VERIFY SIGNATURE: {any}\n", .{bob_verify});
-    // const alice_to_bob_encrypted = RSA_encrypt("HELLO BOB", bob_keys.public_key);
-    // std.debug.print("ALICE SENDS ENCRYPTED MESSAGE \"HELLO BOB\" TO BOB: {any}\n", .{alice_to_bob_encrypted});
-    // const alice_to_bob_decrypted = RSA_decrypt(try alice_to_bob_encrypted, bob_keys.public_key, bob_keys.private_key);
-    // std.debug.print("BOB DECRYPT MESSAGE: {any}\n", .{alice_to_bob_decrypted});
-    // return 0;
+test "RSA basic operations" {
+    const testing = std.testing;
+
+    // Generate keys
+    const keys = KeyPair.generate();
+
+    // Test message
+    const message = "Hello, World!";
+    
+    // Test encryption/decryption
+    const encrypted = try keys.encrypt(message);
+    const decrypted = try keys.decrypt(encrypted);
+    try testing.expectEqualStrings(message, decrypted[0..message.len]);
+
+    // Test signing/verification  
+    const signature = keys.sign(message);
+    try testing.expect(keys.verify(signature, message));
 }
