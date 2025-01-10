@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const model = @import("model.zig");
+const model = @import("shared-secrets");
 const fs = std.fs;
 
 /// Interface for asymmetric cryptography operations
