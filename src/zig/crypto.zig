@@ -101,6 +101,74 @@ pub const AsmCryptoRSA = struct {
         return error.InvalidKeyFormat;
     }
 
+    /// Generate a new RSA private key
+    pub fn makeprivkey(allocator: Allocator) !model.PrivKey {
+        var priv_key = try std.crypto.rsa.PrivateKey.generate(allocator, KEY_BITS, 65537);
+        
+        // Convert to DER format
+        var der_data = try allocator.alloc(u8, priv_key.derSize());
+        try priv_key.toDer(der_data);
+
+        return model.PrivKey{
+            .format = "rsa3072",
+            .data = der_data,
+        };
+    }
+
+    /// Generate public key from private key
+    pub fn makepubkey(allocator: Allocator, priv_key: model.PrivKey) !model.PubKey {
+        // Parse the private key
+        var key = try std.crypto.rsa.PrivateKey.fromDer(priv_key.data);
+        
+        // Extract public key
+        var pub_key = key.toPublicKey();
+        
+        // Convert to DER format
+        var der_data = try allocator.alloc(u8, pub_key.derSize());
+        try pub_key.toDer(der_data);
+
+        return model.PubKey{
+            .format = "rsa3072",
+            .data = der_data,
+        };
+    }
+
+    /// Save public key to file in PEM format
+    pub fn savepubkey(allocator: Allocator, path: []const u8, pub_key: model.PubKey) !bool {
+        // Parse the DER format key
+        var key = try std.crypto.rsa.PublicKey.fromDer(pub_key.data);
+        
+        // Convert to PEM format
+        var pem_data = try allocator.alloc(u8, key.pemSize());
+        defer allocator.free(pem_data);
+        try key.toPem(pem_data);
+
+        // Write to file
+        const file = try fs.cwd().createFile(path, .{});
+        defer file.close();
+        
+        try file.writeAll(pem_data);
+        return true;
+    }
+
+    /// Save private key to file in PEM format
+    pub fn saveprivkey(allocator: Allocator, path: []const u8, priv_key: model.PrivKey) !bool {
+        // Parse the DER format key
+        var key = try std.crypto.rsa.PrivateKey.fromDer(priv_key.data);
+        
+        // Convert to PEM format
+        var pem_data = try allocator.alloc(u8, key.pemSize());
+        defer allocator.free(pem_data);
+        try key.toPem(pem_data);
+
+        // Write to file
+        const file = try fs.cwd().createFile(path, .{});
+        defer file.close();
+        
+        try file.writeAll(pem_data);
+        return true;
+    }
+
     /// Load and detect format of private key from file
     pub fn loadprivkey(allocator: Allocator, path: []const u8) !model.PrivKey {
         const file = try fs.cwd().openFile(path, .{});
