@@ -43,11 +43,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const rsa_tests = b.addTest(.{
+        .root_source_file = .{ .path = "tests/crypto-asm-rsa.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    rsa_tests.addModule("shared-secrets", shared_secrets_module);
+    rsa_tests.addModule("crypto", crypto_module);
+
     const run_tests = b.addRunArtifact(main_tests);
     const run_crypto_tests = b.addRunArtifact(crypto_tests);
+    const run_rsa_tests = b.addRunArtifact(rsa_tests);
 
     // Create a test step
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_crypto_tests.step);
+    test_step.dependOn(&run_rsa_tests.step);
 }
