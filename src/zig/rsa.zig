@@ -29,7 +29,6 @@ const twice_RSA_output_bits = @Type(std.builtin.Type{ .Int = .{
     .bits = (RSA_output_bytes * 16),
 } });
 
-//const max_range_for_prime = 32317006071311007300714876688669951960444102669715484032130345427524655138867890893197201411522913463688717960921898019494119559150490921095088152386448283120630877367300996091750197750389652106796057638384067568276792218642619756161838094338476170470581645852036305042887575891541065808607552399123930385521914333389668342420684974786564569494856176035326322058077805659331026192708460314150258592864177116725943603718461857357598351152301645904403697613233287231227125684710820209725157101726931323469678542580656697935045997268352998638215525166389437335543602135433229604645318478604952148193555853611059596230655;
 const max_range_for_prime: half_RSA_output_bits = @truncate(std.math.pow(RSA_output_bits, 2, RSA_output_bytes * 4) - 1);
 //^--this is 2^2048
 
@@ -265,7 +264,7 @@ fn prime_gen() half_RSA_output_bits {
 }
 /// RSA key pair containing public and private components
 pub const KeyPair = struct {
-    /// The public modulus n = p*q 
+    /// The public modulus n = p*q
     pub: RSA_output_bits,
     /// Public exponent, fixed to 65537
     e: u32 = e,
@@ -371,13 +370,13 @@ test "RSA basic operations" {
 
     // Test message
     const message = "Hello, World!";
-    
+
     // Test encryption/decryption
     const encrypted = try keys.encrypt(message);
     const decrypted = try keys.decrypt(encrypted);
     try testing.expectEqualStrings(message, decrypted[0..message.len]);
 
-    // Test signing/verification  
+    // Test signing/verification
     const signature = keys.sign(message);
     try testing.expect(keys.verify(signature, message));
 }
