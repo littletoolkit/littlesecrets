@@ -129,9 +129,9 @@ pub const AsmCryptoRSA = struct {
     };
 
     /// Encrypt data with RSA public key
-    pub fn aenc(allocator: Allocator, data: []const u8, pubkey: []const u8) error{TooLarge}![]u8 {
+    pub fn aenc(allocator: Allocator, data: []const u8, pubKey: []const u8) error{TooLarge}![]u8 {
         // Parse the public key
-        var key = try std.crypto.rsa.PublicKey.fromDer(pubkey);
+        var key = try std.crypto.rsa.PublicKey.fromDer(pubKey);
         
         // Check if data is too large for RSA encryption
         const max_size = (KEY_BITS / 8) - 42; // Account for OAEP padding
@@ -150,9 +150,9 @@ pub const AsmCryptoRSA = struct {
     }
 
     /// Decrypt data with RSA private key
-    pub fn adec(allocator: Allocator, encdata: []const u8, privkey: []const u8) error{InvalidKey}![]u8 {
+    pub fn adec(allocator: Allocator, encdata: []const u8, privKey: []const u8) error{InvalidKey}![]u8 {
         // Parse the private key
-        var key = try std.crypto.rsa.PrivateKey.fromDer(privkey);
+        var key = try std.crypto.rsa.PrivateKey.fromDer(privKey);
         
         // Allocate output buffer - same size as input for RSA
         var out = try allocator.alloc(u8, encdata.len);
