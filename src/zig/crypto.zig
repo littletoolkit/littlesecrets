@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const model = @import("shared-secrets");
+const crypto = @import("crypto");
 const fs = std.fs;
 
 /// Interface for asymmetric cryptography operations

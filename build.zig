@@ -4,9 +4,16 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Create a module for our code
+    // Create the modules
     const shared_secrets_module = b.addModule("shared-secrets", .{
         .source_file = .{ .path = "src/zig/model.zig" },
+    });
+
+    const crypto_module = b.addModule("crypto", .{
+        .source_file = .{ .path = "src/zig/crypto.zig" },
+        .dependencies = &.{
+            .{ .name = "shared-secrets", .module = shared_secrets_module },
+        },
     });
 
     // Create the library
@@ -17,10 +24,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Add the crypto module
-    lib.addModule("crypto", .{
-        .source_file = .{ .path = "src/zig/crypto.zig" },
-    });
+    // Add module dependencies to the library
+    lib.addModule("shared-secrets", shared_secrets_module);
+    lib.addModule("crypto", crypto_module);
 
     b.installArtifact(lib);
 
