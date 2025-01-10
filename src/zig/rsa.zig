@@ -16,24 +16,9 @@ const RSA_E = 65537;
 
 const max_message_len = RSA_output_bytes - 2 * hash_output_bytes - 2; //This will be the maximum length of a message encrytpable at one time
 const db_size = RSA_output_bytes - hash_output_bytes - 1;
-const half_RSA_output_bits = @Type(.{
-    .Int = .{
-        .signedness = .unsigned,
-        .bits = (RSA_output_bytes * 8) / 2,
-    }
-});
-const RSA_output_bits = @Type(.{
-    .Int = .{
-        .signedness = .unsigned,
-        .bits = (RSA_output_bytes * 8),
-    }
-});
-const twice_RSA_output_bits = @Type(.{
-    .Int = .{
-        .signedness = .unsigned,
-        .bits = (RSA_output_bytes * 16),
-    }
-});
+const half_RSA_output_bits = std.meta.Int(.unsigned, (RSA_output_bytes * 8) / 2);
+const RSA_output_bits = std.meta.Int(.unsigned, RSA_output_bytes * 8);
+const twice_RSA_output_bits = std.meta.Int(.unsigned, RSA_output_bytes * 16);
 
 const max_range_for_prime: half_RSA_output_bits = @truncate(std.math.pow(RSA_output_bits, 2, RSA_output_bytes * 4) - 1);
 //^--this is 2^2048
