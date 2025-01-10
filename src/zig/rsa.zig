@@ -265,11 +265,11 @@ fn prime_gen() half_RSA_output_bits {
 /// RSA key pair containing public and private components
 pub const KeyPair = struct {
     /// The public modulus n = p*q
-    pub: RSA_output_bits,
+    pub const public: RSA_output_bits,
     /// Public exponent, fixed to 65537
-    e: u32 = e,
-    /// Private exponent d
-    priv: RSA_output_bits,
+    pub const e: u32 = e,
+    /// Private exponent d 
+    pub const private: RSA_output_bits,
 
     /// Generate a new RSA key pair
     pub fn generate() KeyPair {
@@ -278,28 +278,28 @@ pub const KeyPair = struct {
 
     /// Encrypt a message using this public key
     pub fn encrypt(self: KeyPair, message: []const u8) OAEP_PLUS_encode_error!RSA_output_bits {
-        return RSA_encrypt(message, self.pub);
+        return RSA_encrypt(message, self.public);
     }
 
     /// Decrypt a message using this private key
     pub fn decrypt(self: KeyPair, cipher: RSA_output_bits) OAEP_PLUS_decode_error![max_message_len]u8 {
-        return RSA_decrypt(cipher, self.pub, self.priv);
+        return RSA_decrypt(cipher, self.public, self.private);
     }
 
     /// Sign a message using this private key
     pub fn sign(self: KeyPair, message: []const u8) RSA_output_bits {
-        return RSA_sign(message, self.priv, self.pub);
+        return RSA_sign(message, self.private, self.public);
     }
 
     /// Verify a signature using this public key
     pub fn verify(self: KeyPair, signature: RSA_output_bits, message: []const u8) bool {
-        return RSA_verify(signature, message, self.pub);
+        return RSA_verify(signature, message, self.public);
     }
 };
 fn RSA_key_gen() KeyPair {
     var out = KeyPair{
-        .pub = 0,
-        .priv = 0,
+        .public = 0,
+        .private = 0,
     };
 
     // const p: half_RSA_output_bits = 26141749901051065198158178257821596557683032608480639581216436750318534601552613888423069948261950628929804543205693935725237742132552563654177510805790073659732241011367018800637300294870707999761242533695030250418227355447959171890605183760744716333330148786915077838055454357916713569756854701384342164929036515605675902927778492747807472749474784704051247626410415312934675826425299294603369763904348940016322200572877052106660515058534462791443448421227487586361832092469021659852899136456358392395331300101430277376669142963781403074071303064074215077312116409600373610790841052836710438995880733361499653110983;
