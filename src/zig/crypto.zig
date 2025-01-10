@@ -1,5 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const model = @import("model.zig");
+const fs = std.fs;
 
 /// Interface for asymmetric cryptography operations
 pub const AsmCrypto = struct {
@@ -28,6 +30,95 @@ pub const AsmCryptoRSA = struct {
     const Self = @This();
     const KEY_BITS: usize = 3072;
     const PADDING = std.crypto.rand;
+
+    /// Supported key formats
+    const KeyFormat = enum {
+        pem,
+        der,
+        openssh,
+    };
+
+    /// Convert raw key data to normalized PubKey
+    pub fn pubkey(allocator: Allocator, data: []const u8, format: []const u8) !model.PubKey {
+        const key_format = std.meta.stringToEnum(KeyFormat, format) orelse return error.UnsupportedFormat;
+        
+        // Parse and normalize the key based on format
+        var normalized = switch (key_format) {
+            .pem => try std.crypto.rsa.PublicKey.fromPem(data),
+            .der => try std.crypto.rsa.PublicKey.fromDer(data),
+            .openssh => try std.crypto.rsa.PublicKey.fromOpenSsh(data),
+        };
+
+        // Convert to DER format for consistent storage
+        var der_data = try allocator.alloc(u8, normalized.derSize());
+        try normalized.toDer(der_data);
+
+        return model.PubKey{
+            .format = "rsa3072",
+            .data = der_data,
+        };
+    }
+
+    /// Convert raw key data to normalized PrivKey
+    pub fn privkey(allocator: Allocator, data: []const u8, format: []const u8) !model.PrivKey {
+        const key_format = std.meta.stringToEnum(KeyFormat, format) orelse return error.UnsupportedFormat;
+        
+        // Parse and normalize the key based on format
+        var normalized = switch (key_format) {
+            .pem => try std.crypto.rsa.PrivateKey.fromPem(data),
+            .der => try std.crypto.rsa.PrivateKey.fromDer(data),
+            .openssh => try std.crypto.rsa.PrivateKey.fromOpenSsh(data),
+        };
+
+        // Convert to DER format for consistent storage
+        var der_data = try allocator.alloc(u8, normalized.derSize());
+        try normalized.toDer(der_data);
+
+        return model.PrivKey{
+            .format = "rsa3072",
+            .data = der_data,
+        };
+    }
+
+    /// Load and detect format of public key from file
+    pub fn loadpubkey(allocator: Allocator, path: []const u8) !model.PubKey {
+        const file = try fs.cwd().openFile(path, .{});
+        defer file.close();
+
+        const data = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+        defer allocator.free(data);
+
+        // Try each format until one works
+        const formats = [_][]const u8{ "pem", "der", "openssh" };
+        for (formats) |format| {
+            if (pubkey(allocator, data, format)) |key| {
+                return key;
+            } else |_| {
+                continue;
+            }
+        }
+        return error.InvalidKeyFormat;
+    }
+
+    /// Load and detect format of private key from file
+    pub fn loadprivkey(allocator: Allocator, path: []const u8) !model.PrivKey {
+        const file = try fs.cwd().openFile(path, .{});
+        defer file.close();
+
+        const data = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+        defer allocator.free(data);
+
+        // Try each format until one works
+        const formats = [_][]const u8{ "pem", "der", "openssh" };
+        for (formats) |format| {
+            if (privkey(allocator, data, format)) |key| {
+                return key;
+            } else |_| {
+                continue;
+            }
+        }
+        return error.InvalidKeyFormat;
+    }
 
     /// The interface implementation
     pub const interface = AsmCrypto{
