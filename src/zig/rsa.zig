@@ -12,7 +12,7 @@ const RSA_output_bytes = 256; //The number of bytes in RSA modulus
 const L = ""; //Used in OAEP Encoding
 const prime_test_rounds = 7; //The number of rounds of miller rabin primality test for random number
 
-const e = 65537;
+const RSA_E = 65537;
 
 const max_message_len = RSA_output_bytes - 2 * hash_output_bytes - 2; //This will be the maximum length of a message encrytpable at one time
 const db_size = RSA_output_bytes - hash_output_bytes - 1;
@@ -269,7 +269,7 @@ pub const KeyPair = struct {
     /// Private exponent d 
     private: RSA_output_bits,
     /// Public exponent, fixed to 65537
-    pub const e: u32 = e;
+    pub const e: u32 = RSA_E;
 
     /// Generate a new RSA key pair
     pub fn generate() KeyPair {
@@ -313,8 +313,8 @@ fn RSA_key_gen() KeyPair {
     temp = (p - 1);
     temp *= (q - 1);
     while (true) {
-        if (@mod((temp * i) + 1, e) == 0) {
-            d = @truncate(@divExact((temp * i) + 1, e));
+        if (@mod((temp * i) + 1, RSA_E) == 0) {
+            d = @truncate(@divExact((temp * i) + 1, RSA_E));
             break;
         } else {
             i += 1;
@@ -329,7 +329,7 @@ pub fn RSA_encrypt(inp: []const u8, public_key: RSA_output_bits) OAEP_PLUS_encod
         return err;
     };
     const enc = bytes_to_int(RSA_output_bits, (encoded)[0..]);
-    return power_mod_2(enc, e, public_key);
+    return power_mod_2(enc, RSA_E, public_key);
 }
 pub fn RSA_decrypt(inp: RSA_output_bits, public_key: RSA_output_bits, private_key: RSA_output_bits) OAEP_PLUS_decode_error![max_message_len]u8 {
     const enc = power_mod_2(inp, private_key, public_key);
@@ -347,7 +347,7 @@ pub fn RSA_sign(inp: []const u8, private_key: RSA_output_bits, public_key: RSA_o
 pub fn RSA_verify(inp: RSA_output_bits, message: []const u8, public_key: RSA_output_bits) bool {
     const hash = hash_bytes(message);
     const hashed: [RSA_output_bytes]u8 = [_]u8{0x00} ** (RSA_output_bytes - hash_output_bytes) ++ hash;
-    const out_n = power_mod_2(inp, e, public_key);
+    const out_n = power_mod_2(inp, RSA_E, public_key);
     var out = [_]u8{0x00} ** RSA_output_bytes;
     int_to_bytes(out_n, (out)[0..]);
     for (0..RSA_output_bytes) |i| {
