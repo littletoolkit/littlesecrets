@@ -1,2 +1,5 @@
 .aider*
+.zig*
+zig-cache
 .env
+docs/scratchpad.md

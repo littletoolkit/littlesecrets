@@ -34,3 +34,4 @@ For symmetric crypto backends (SymCrypto):
 
 Crypto backends should have a unique `name` that can be used to identify the
 format.
+
