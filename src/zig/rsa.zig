@@ -265,11 +265,11 @@ fn prime_gen() half_RSA_output_bits {
 /// RSA key pair containing public and private components
 pub const KeyPair = struct {
     /// The public modulus n = p*q
-    pub const public: RSA_output_bits;
+    public: RSA_output_bits,
+    /// Private exponent d 
+    private: RSA_output_bits,
     /// Public exponent, fixed to 65537
     pub const e: u32 = e;
-    /// Private exponent d 
-    pub const private: RSA_output_bits;
 
     /// Generate a new RSA key pair
     pub fn generate() KeyPair {
@@ -298,8 +298,8 @@ pub const KeyPair = struct {
 };
 fn RSA_key_gen() KeyPair {
     var out = KeyPair{
-        .pub = 0,
-        .priv = 0,
+        .public = 0,
+        .private = 0,
     };
 
 
