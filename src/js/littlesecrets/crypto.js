@@ -70,6 +70,43 @@ class AsmCrypto {
     async loadPrivKey(path) {
         throw new Error("Not implemented");
     }
+
+    /**
+     * Generate public key from private key
+     * @param {import('./model.js').PrivKey} privKey Private key
+     * @returns {Promise<import('./model.js').PubKey>}
+     */
+    async makePubKey(privKey) {
+        throw new Error("Not implemented");
+    }
+
+    /**
+     * Generate new private key
+     * @returns {Promise<import('./model.js').PrivKey>}
+     */
+    async makePrivKey() {
+        throw new Error("Not implemented");
+    }
+
+    /**
+     * Save public key to file in normalized format
+     * @param {string} path File path
+     * @param {import('./model.js').PubKey} pubKey Public key
+     * @returns {Promise<boolean>}
+     */
+    async savePubKey(path, pubKey) {
+        throw new Error("Not implemented");
+    }
+
+    /**
+     * Save private key to file in normalized format
+     * @param {string} path File path
+     * @param {import('./model.js').PrivKey} privKey Private key
+     * @returns {Promise<boolean>}
+     */
+    async savePrivKey(path, privKey) {
+        throw new Error("Not implemented");
+    }
 }
 
 export { AsmCrypto };

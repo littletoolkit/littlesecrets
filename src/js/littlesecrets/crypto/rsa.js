@@ -223,6 +223,79 @@ class AsmCryptoRSA extends AsmCrypto {
         const format = AsmCryptoRSA.detectFormat(data);
         return this.privKey(format, data);
     }
+
+    /**
+     * @inheritdoc
+     */
+    async makePubKey(privKey) {
+        // Import the private key
+        const key = await this.importPrivateKey(privKey.data);
+        // Extract the public key components
+        const pubKey = await crypto.subtle.exportKey('spki', key);
+        return new PubKey(this.name, new Uint8Array(pubKey));
+    }
+
+    /**
+     * @inheritdoc
+     */
+    async makePrivKey() {
+        const keyPair = await crypto.subtle.generateKey(
+            {
+                name: 'RSA-OAEP',
+                modulusLength: 3072,
+                publicExponent: new Uint8Array([1, 0, 1]),
+                hash: 'SHA-256'
+            },
+            true,
+            ['encrypt', 'decrypt']
+        );
+        const privKeyData = await this.exportKey(keyPair.privateKey);
+        return new PrivKey(this.name, privKeyData);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    async savePubKey(path, pubKey) {
+        try {
+            // Convert to PEM format
+            const spki = pubKey.data;
+            const b64 = btoa(String.fromCharCode(...spki));
+            const pem = [
+                '-----BEGIN PUBLIC KEY-----',
+                ...b64.match(/.{1,64}/g),
+                '-----END PUBLIC KEY-----'
+            ].join('\n');
+            
+            await Bun.write(path, pem);
+            return true;
+        } catch (error) {
+            console.error('Failed to save public key:', error);
+            return false;
+        }
+    }
+
+    /**
+     * @inheritdoc
+     */
+    async savePrivKey(path, privKey) {
+        try {
+            // Convert to PEM format
+            const pkcs8 = privKey.data;
+            const b64 = btoa(String.fromCharCode(...pkcs8));
+            const pem = [
+                '-----BEGIN PRIVATE KEY-----',
+                ...b64.match(/.{1,64}/g),
+                '-----END PRIVATE KEY-----'
+            ].join('\n');
+            
+            await Bun.write(path, pem);
+            return true;
+        } catch (error) {
+            console.error('Failed to save private key:', error);
+            return false;
+        }
+    }
 }
 
 export { AsmCryptoRSA };
