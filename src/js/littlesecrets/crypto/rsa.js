@@ -17,18 +17,9 @@ class AsmCryptoRSA extends AsmCrypto {
    */
   async exportKey(key) {
     console.log("KEY", key);
-    try {
-      const format = key.type === "private" ? "pkcs8" : "spki";
-      const exported = await crypto.subtle.exportKey(format, key);
-      return new Uint8Array(exported);
-    } catch (error) {
-      if (error instanceof DataError) {
-        // If direct export fails, try raw format first
-        const rawExported = await crypto.subtle.exportKey("raw", key);
-        return new Uint8Array(rawExported);
-      }
-      throw error;
-    }
+    const format = key.type === "private" ? "pkcs8" : "spki";
+    const exported = await crypto.subtle.exportKey(format, key);
+    return new Uint8Array(exported);
   }
 
   /**
