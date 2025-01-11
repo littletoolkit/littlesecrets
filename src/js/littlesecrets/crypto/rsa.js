@@ -108,4 +108,121 @@ class AsmCryptoRSA extends AsmCrypto {
     }
 }
 
+    /**
+     * Detect key format from content
+     * @param {Uint8Array} data
+     * @returns {'pem'|'der'|'ssh'} 
+     */
+    detectFormat(data) {
+        // Check if it's PEM format (starts with -----BEGIN)
+        const textDecoder = new TextDecoder();
+        const text = textDecoder.decode(data.slice(0, 20));
+        if (text.startsWith('-----BEGIN')) {
+            return 'pem';
+        }
+        
+        // Check if it's SSH format (starts with ssh-rsa or ecdsa-sha2)
+        if (text.startsWith('ssh-rsa') || text.startsWith('ecdsa-sha2')) {
+            return 'ssh';
+        }
+        
+        // Assume DER format by default
+        return 'der';
+    }
+
+    /**
+     * Convert PEM to DER format
+     * @param {Uint8Array} pemData
+     * @returns {Uint8Array}
+     */
+    pemToDer(pemData) {
+        const textDecoder = new TextDecoder();
+        const pemString = textDecoder.decode(pemData);
+        const base64 = pemString
+            .replace(/-----BEGIN.*?-----/, '')
+            .replace(/-----END.*?-----/, '')
+            .replace(/\s+/g, '');
+        return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    }
+
+    /**
+     * Convert SSH public key to SPKI format
+     * @param {Uint8Array} sshData
+     * @returns {Uint8Array}
+     */
+    sshToSpki(sshData) {
+        // This is a simplified implementation
+        // Real implementation would need to parse SSH key format
+        // and construct proper SPKI structure
+        throw new Error("SSH format not yet supported");
+    }
+
+    /**
+     * @inheritdoc
+     */
+    async pubKey(format, data) {
+        let derData;
+        
+        switch (format.toLowerCase()) {
+            case 'pem':
+                derData = this.pemToDer(data);
+                break;
+            case 'ssh':
+                derData = this.sshToSpki(data);
+                break;
+            case 'der':
+                derData = data;
+                break;
+            default:
+                throw new Error(`Unsupported key format: ${format}`);
+        }
+
+        // Import to validate and normalize
+        await this.importPublicKey(derData);
+        return new PubKey(this.name, derData);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    async privKey(format, data) {
+        let derData;
+        
+        switch (format.toLowerCase()) {
+            case 'pem':
+                derData = this.pemToDer(data);
+                break;
+            case 'der':
+                derData = data;
+                break;
+            default:
+                throw new Error(`Unsupported key format: ${format}`);
+        }
+
+        // Import to validate and normalize
+        await this.importPrivateKey(derData);
+        return new PrivKey(this.name, derData);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    async loadPubKey(path) {
+        const response = await fetch(path);
+        const data = new Uint8Array(await response.arrayBuffer());
+        const format = this.detectFormat(data);
+        return this.pubKey(format, data);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    async loadPrivKey(path) {
+        const response = await fetch(path);
+        const data = new Uint8Array(await response.arrayBuffer());
+        const format = this.detectFormat(data);
+        return this.privKey(format, data);
+    }
+}
+
 export { AsmCryptoRSA };

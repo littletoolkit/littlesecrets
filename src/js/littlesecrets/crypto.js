@@ -32,6 +32,44 @@ class AsmCrypto {
     async generateKeyPair() {
         throw new Error("Not implemented");
     }
+
+    /**
+     * Create a normalized PubKey from key data in the given format
+     * @param {string} format Key format (e.g. 'pem', 'der', 'ssh')
+     * @param {Uint8Array} data Key data
+     * @returns {Promise<import('./model.js').PubKey>}
+     */
+    async pubKey(format, data) {
+        throw new Error("Not implemented");
+    }
+
+    /**
+     * Create a normalized PrivKey from key data in the given format
+     * @param {string} format Key format (e.g. 'pem', 'der')
+     * @param {Uint8Array} data Key data
+     * @returns {Promise<import('./model.js').PrivKey>}
+     */
+    async privKey(format, data) {
+        throw new Error("Not implemented");
+    }
+
+    /**
+     * Load a public key from a file, detecting its format
+     * @param {string} path Path to key file
+     * @returns {Promise<import('./model.js').PubKey>}
+     */
+    async loadPubKey(path) {
+        throw new Error("Not implemented");
+    }
+
+    /**
+     * Load a private key from a file, detecting its format
+     * @param {string} path Path to key file
+     * @returns {Promise<import('./model.js').PrivKey>}
+     */
+    async loadPrivKey(path) {
+        throw new Error("Not implemented");
+    }
 }
 
 export { AsmCrypto };
