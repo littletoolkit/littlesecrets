@@ -113,7 +113,7 @@ class AsmCryptoRSA extends AsmCrypto {
      * @param {Uint8Array} data
      * @returns {'pem'|'der'|'ssh'} 
      */
-    detectFormat(data) {
+    static detectFormat(data) {
         // Check if it's PEM format (starts with -----BEGIN)
         const textDecoder = new TextDecoder();
         const text = textDecoder.decode(data.slice(0, 20));
@@ -135,7 +135,7 @@ class AsmCryptoRSA extends AsmCrypto {
      * @param {Uint8Array} pemData
      * @returns {Uint8Array}
      */
-    pemToDer(pemData) {
+    static pemToDer(pemData) {
         const textDecoder = new TextDecoder();
         const pemString = textDecoder.decode(pemData);
         const base64 = pemString
@@ -150,7 +150,7 @@ class AsmCryptoRSA extends AsmCrypto {
      * @param {Uint8Array} sshData
      * @returns {Uint8Array}
      */
-    sshToSpki(sshData) {
+    static sshToSpki(sshData) {
         // This is a simplified implementation
         // Real implementation would need to parse SSH key format
         // and construct proper SPKI structure
@@ -165,10 +165,10 @@ class AsmCryptoRSA extends AsmCrypto {
         
         switch (format.toLowerCase()) {
             case 'pem':
-                derData = this.pemToDer(data);
+                derData = AsmCryptoRSA.pemToDer(data);
                 break;
             case 'ssh':
-                derData = this.sshToSpki(data);
+                derData = AsmCryptoRSA.sshToSpki(data);
                 break;
             case 'der':
                 derData = data;
@@ -210,7 +210,7 @@ class AsmCryptoRSA extends AsmCrypto {
     async loadPubKey(path) {
         const response = await fetch(path);
         const data = new Uint8Array(await response.arrayBuffer());
-        const format = this.detectFormat(data);
+        const format = AsmCryptoRSA.detectFormat(data);
         return this.pubKey(format, data);
     }
 
