@@ -149,10 +149,85 @@ class AsmCryptoRSA extends AsmCrypto {
      * @returns {Uint8Array}
      */
     static SshToSpki(sshData) {
-        // This is a simplified implementation
-        // Real implementation would need to parse SSH key format
-        // and construct proper SPKI structure
-        throw new Error("SSH format not yet supported");
+        const textDecoder = new TextDecoder();
+        const sshKey = textDecoder.decode(sshData);
+        
+        // Remove any comments and get just the base64 part
+        const base64Data = sshKey.split(' ')[1];
+        if (!base64Data) {
+            throw new Error("Invalid SSH key format");
+        }
+        
+        // Decode base64 to get raw key components
+        const rawKey = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+        
+        // Parse SSH key format:
+        // [length][type][length][exponent][length][modulus]
+        let offset = 0;
+        
+        // Skip key type
+        const typeLen = new DataView(rawKey.buffer).getUint32(0);
+        offset = 4 + typeLen;
+        
+        // Get exponent
+        const expLen = new DataView(rawKey.buffer).getUint32(offset);
+        offset += 4;
+        const exponent = rawKey.slice(offset, offset + expLen);
+        offset += expLen;
+        
+        // Get modulus
+        const modLen = new DataView(rawKey.buffer).getUint32(offset);
+        offset += 4;
+        const modulus = rawKey.slice(offset, offset + modLen);
+        
+        // Construct SPKI structure
+        // RSA Public Key format (ASN.1)
+        const rsaPublicKey = new Uint8Array([
+            0x30, 0x82, 0x00, 0x00,  // SEQUENCE header (length to be filled)
+            0x02, 0x82, 0x00, 0x00,  // INTEGER (modulus) header
+            ...modulus,
+            0x02, 0x03,              // INTEGER (exponent) header
+            ...exponent
+        ]);
+        
+        // Update SEQUENCE length
+        const totalLen = rsaPublicKey.length - 4;
+        rsaPublicKey[2] = (totalLen >> 8) & 0xFF;
+        rsaPublicKey[3] = totalLen & 0xFF;
+        
+        // Update modulus length
+        const modBytes = modulus.length;
+        rsaPublicKey[6] = (modBytes >> 8) & 0xFF;
+        rsaPublicKey[7] = modBytes & 0xFF;
+        
+        // SPKI format wrapping
+        const spkiHeader = new Uint8Array([
+            0x30, 0x82, 0x00, 0x00,  // SEQUENCE header
+            0x30, 0x0D,              // SEQUENCE (algorithm)
+            0x06, 0x09,              // OBJECT IDENTIFIER
+            0x2A, 0x86, 0x48, 0x86,  // 1.2.840.113549
+            0xF7, 0x0D, 0x01, 0x01,  // .1.1.1
+            0x01,                     // (rsaEncryption)
+            0x05, 0x00,              // NULL
+            0x03, 0x82, 0x00, 0x00   // BIT STRING header
+        ]);
+        
+        const spki = new Uint8Array([
+            ...spkiHeader,
+            ...rsaPublicKey
+        ]);
+        
+        // Update outer SEQUENCE length
+        const spkiLen = spki.length - 4;
+        spki[2] = (spkiLen >> 8) & 0xFF;
+        spki[3] = spkiLen & 0xFF;
+        
+        // Update BIT STRING length
+        const bitStringLen = rsaPublicKey.length;
+        spki[spkiHeader.length - 2] = (bitStringLen >> 8) & 0xFF;
+        spki[spkiHeader.length - 1] = bitStringLen & 0xFF;
+        
+        return spki;
     }
 
     /**
