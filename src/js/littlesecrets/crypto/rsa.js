@@ -172,7 +172,7 @@ class AsmCryptoRSA extends AsmCrypto {
                 derData = data;
                 break;
             default:
-                throw new Error(`Unsupported key format: ${format}`);
+                throw new Error(`Unsupported key format: ${format} (detected: ${AsmCryptoRSA.DetectFormat(data)})`);
         }
 
         // Import to validate and normalize
