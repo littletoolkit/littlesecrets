@@ -206,8 +206,8 @@ class AsmCryptoRSA extends AsmCrypto {
      * @inheritdoc
      */
     async loadPubKey(path) {
-        const response = await fetch(path);
-        const data = new Uint8Array(await response.arrayBuffer());
+        const file = Bun.file(path);
+        const data = new Uint8Array(await file.arrayBuffer());
         const format = AsmCryptoRSA.detectFormat(data);
         return this.pubKey(format, data);
     }
@@ -216,8 +216,8 @@ class AsmCryptoRSA extends AsmCrypto {
      * @inheritdoc
      */
     async loadPrivKey(path) {
-        const response = await fetch(path);
-        const data = new Uint8Array(await response.arrayBuffer());
+        const file = Bun.file(path);
+        const data = new Uint8Array(await file.arrayBuffer());
         const format = AsmCryptoRSA.detectFormat(data);
         return this.privKey(format, data);
     }
