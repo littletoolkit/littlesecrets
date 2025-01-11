@@ -22,7 +22,7 @@ class AsmCryptoRSA extends AsmCrypto {
   }
 
   /**
-   * Import public key from raw format
+   * Import public key from raw format (SPKI)
    * @param {Uint8Array} keyData
    * @returns {Promise<CryptoKey>}
    */
@@ -152,7 +152,7 @@ class AsmCryptoRSA extends AsmCrypto {
     const textDecoder = new TextDecoder();
     const sshKey = textDecoder.decode(sshData);
     const [type, keyData] = sshKey.split(" ");
-    
+
     if (!type.startsWith("ssh-rsa")) {
       throw new Error("Only RSA SSH keys are supported");
     }
@@ -160,10 +160,10 @@ class AsmCryptoRSA extends AsmCrypto {
     // Import as SPKI
     return await crypto.subtle.importKey(
       "spki",
-      Buffer.from(keyData, 'base64'),
+      Buffer.from(keyData, "base64"),
       {
         name: "RSA-OAEP",
-        hash: "SHA-256"
+        hash: "SHA-256",
       },
       true,
       ["encrypt"]
@@ -183,7 +183,7 @@ class AsmCryptoRSA extends AsmCrypto {
           AsmCryptoRSA.PemToDer(data),
           {
             name: "RSA-OAEP",
-            hash: "SHA-256"
+            hash: "SHA-256",
           },
           true,
           ["encrypt"]
@@ -198,7 +198,7 @@ class AsmCryptoRSA extends AsmCrypto {
           data,
           {
             name: "RSA-OAEP",
-            hash: "SHA-256"
+            hash: "SHA-256",
           },
           true,
           ["encrypt"]
