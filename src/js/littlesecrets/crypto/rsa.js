@@ -129,28 +129,28 @@ class AsmCryptoRSA extends AsmCrypto {
   }
 
   /**
-   * Convert PEM to DER format
+   * Convert PEM to SPKI format
    * @param {Uint8Array} pemData
    * @returns {Uint8Array}
    */
-  static PemToDer(pemData) {
+  static PemToSpki(pemData) {
     const textDecoder = new TextDecoder();
     const pemString = textDecoder.decode(pemData);
     
     // Extract the base64-encoded data between the header and footer
-    const matches = pemString.match(/-----BEGIN.*?-----\n([^-]*)\n-----END.*?-----/);
+    const matches = pemString.match(/-----BEGIN PUBLIC KEY-----\n([^-]*)\n-----END PUBLIC KEY-----/);
     if (!matches || matches.length !== 2) {
-      throw new Error("Invalid PEM format");
+      throw new Error("Invalid PEM public key format");
     }
     
     // Clean up the base64 string by removing whitespace
     const base64 = matches[1].replace(/\s+/g, "");
     
-    // Convert base64 to binary
+    // Convert base64 to binary SPKI format
     try {
       return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
     } catch (error) {
-      throw new Error("Failed to decode base64 data: " + error.message);
+      throw new Error("Failed to decode SPKI data: " + error.message);
     }
   }
 
@@ -191,7 +191,7 @@ class AsmCryptoRSA extends AsmCrypto {
       case "pem":
         cryptoKey = await crypto.subtle.importKey(
           "spki",
-          AsmCryptoRSA.PemToDer(data),
+          AsmCryptoRSA.PemToSpki(data),
           {
             name: "RSA-OAEP",
             hash: "SHA-256",
