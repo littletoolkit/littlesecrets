@@ -106,8 +106,6 @@ class AsmCryptoRSA extends AsmCrypto {
             priv: new PrivKey(this.name, privKeyData)
         };
     }
-}
-
     /**
      * Detect key format from content
      * @param {Uint8Array} data
