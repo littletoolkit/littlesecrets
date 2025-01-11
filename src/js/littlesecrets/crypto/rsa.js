@@ -129,40 +129,49 @@ class AsmCryptoRSA extends AsmCrypto {
   }
 
   /**
-   * Convert key using ssh-keygen
+   * Convert key using ssh-keygen with secure temp files
    * @param {Uint8Array} keyData Input key data
    * @param {string} inFormat Input format ('PEM'|'SSH')
    * @param {string} outFormat Output format ('PEM'|'SSH') 
    * @returns {Promise<Uint8Array>}
    */
   static async convertKey(keyData, inFormat, outFormat) {
-    const tmpDir = await Bun.file("/tmp/littlesecrets").exists() 
-      ? "/tmp/littlesecrets"
-      : await Bun.write("/tmp/littlesecrets", "");
-
-    const inPath = `${tmpDir}/key.${inFormat.toLowerCase()}`;
-    const outPath = `${tmpDir}/key.${outFormat.toLowerCase()}`;
-
-    // Write input key
-    await Bun.write(inPath, keyData);
-
-    // Convert using ssh-keygen
-    const proc = Bun.spawn(["ssh-keygen", "-f", inPath, "-e", "-m", outFormat], {
-      stdout: "pipe",
-      stderr: "pipe"
+    // Create secure temp directory with user-only permissions
+    const tmpDir = await new Promise((resolve, reject) => {
+      import('node:crypto').then(crypto => {
+        const dir = `/tmp/littlesecrets-${crypto.randomBytes(16).toString('hex')}`;
+        Bun.spawn(["mkdir", "-m", "700", dir]).then(proc => {
+          if (proc.exitCode === 0) resolve(dir);
+          else reject(new Error("Failed to create secure temp directory"));
+        });
+      });
     });
-    
-    const output = await new Response(proc.stdout).arrayBuffer();
-    const error = await new Response(proc.stderr).text();
-    
-    if (await proc.exited && error) {
-      throw new Error(`ssh-keygen failed: ${error}`);
-    }
 
-    // Cleanup
-    await Bun.write(inPath, "");
-    
-    return new Uint8Array(output);
+    try {
+      const inPath = `${tmpDir}/key.${inFormat.toLowerCase()}`;
+      
+      // Write input key with user-only permissions (0600)
+      const file = Bun.file(inPath, { createMode: 0o600 });
+      await Bun.write(file, keyData);
+
+      // Convert using ssh-keygen
+      const proc = Bun.spawn(["ssh-keygen", "-f", inPath, "-e", "-m", outFormat], {
+        stdout: "pipe",
+        stderr: "pipe"
+      });
+      
+      const output = await new Response(proc.stdout).arrayBuffer();
+      const error = await new Response(proc.stderr).text();
+      
+      if (await proc.exited && error) {
+        throw new Error(`ssh-keygen failed: ${error}`);
+      }
+
+      return new Uint8Array(output);
+    } finally {
+      // Clean up: remove temp directory and contents
+      await Bun.spawn(["rm", "-rf", tmpDir]);
+    }
   }
 
   /**
