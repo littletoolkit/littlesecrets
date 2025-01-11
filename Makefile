@@ -1,15 +1,16 @@
 # Default target
 .PHONY: all
-all: test
+all: test-keys test
 
 # Run all tests
 .PHONY: test
 test:
-	bun test tests/*.js
+	bun test ./tests/*.js
 
 # Generate test keys
 .PHONY: test-keys
 test-keys:
+	mkdir -p tests/data
 	bun tests/data/generate-test-keys.js
 
 # Clean generated test files
