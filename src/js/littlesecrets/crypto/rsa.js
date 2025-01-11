@@ -129,49 +129,63 @@ class AsmCryptoRSA extends AsmCrypto {
   }
 
   /**
-   * Convert PEM to SPKI format
-   * @param {Uint8Array} pemData
-   * @returns {Uint8Array}
+   * Convert key using ssh-keygen
+   * @param {Uint8Array} keyData Input key data
+   * @param {string} inFormat Input format ('PEM'|'SSH')
+   * @param {string} outFormat Output format ('PEM'|'SSH') 
+   * @returns {Promise<Uint8Array>}
    */
-  static PemToSpki(pemData) {
-    const textDecoder = new TextDecoder();
-    const pemString = textDecoder.decode(pemData);
+  static async convertKey(keyData, inFormat, outFormat) {
+    const tmpDir = await Bun.file("/tmp/littlesecrets").exists() 
+      ? "/tmp/littlesecrets"
+      : await Bun.write("/tmp/littlesecrets", "");
+
+    const inPath = `${tmpDir}/key.${inFormat.toLowerCase()}`;
+    const outPath = `${tmpDir}/key.${outFormat.toLowerCase()}`;
+
+    // Write input key
+    await Bun.write(inPath, keyData);
+
+    // Convert using ssh-keygen
+    const proc = Bun.spawn(["ssh-keygen", "-f", inPath, "-e", "-m", outFormat], {
+      stdout: "pipe",
+      stderr: "pipe"
+    });
     
-    // Extract the base64-encoded data between the header and footer
-    const matches = pemString.match(/-----BEGIN PUBLIC KEY-----\n([^-]*)\n-----END PUBLIC KEY-----/);
-    if (!matches || matches.length !== 2) {
-      throw new Error("Invalid PEM public key format");
+    const output = await new Response(proc.stdout).arrayBuffer();
+    const error = await new Response(proc.stderr).text();
+    
+    if (await proc.exited && error) {
+      throw new Error(`ssh-keygen failed: ${error}`);
     }
+
+    // Cleanup
+    await Bun.write(inPath, "");
     
-    // Clean up the base64 string by removing whitespace
-    const base64 = matches[1].replace(/\s+/g, "");
-    
-    // Convert base64 to binary SPKI format
-    try {
-      return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    } catch (error) {
-      throw new Error("Failed to decode SPKI data: " + error.message);
-    }
+    return new Uint8Array(output);
   }
 
   /**
-   * Parse SSH public key format and extract components
+   * Parse SSH public key format and convert to SPKI
    * @param {Uint8Array} sshData
    * @returns {Promise<CryptoKey>}
    */
   async parseSshPublicKey(sshData) {
     const textDecoder = new TextDecoder();
     const sshKey = textDecoder.decode(sshData);
-    const [type, keyData] = sshKey.split(" ");
+    const [type] = sshKey.split(" ");
 
     if (!type.startsWith("ssh-rsa")) {
       throw new Error("Only RSA SSH keys are supported");
     }
 
-    // Import as SPKI
+    // Convert SSH to PEM using ssh-keygen
+    const pemData = await AsmCryptoRSA.convertKey(sshData, "SSH", "PEM");
+    
+    // Import the PEM format
     return await crypto.subtle.importKey(
       "spki",
-      Buffer.from(keyData, "base64"),
+      pemData,
       {
         name: "RSA-OAEP",
         hash: "SHA-256",
@@ -191,7 +205,7 @@ class AsmCryptoRSA extends AsmCrypto {
       case "pem":
         cryptoKey = await crypto.subtle.importKey(
           "spki",
-          AsmCryptoRSA.PemToSpki(data),
+          data,
           {
             name: "RSA-OAEP",
             hash: "SHA-256",
