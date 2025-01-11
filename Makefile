@@ -1,14 +1,21 @@
-.PHONY: test clean
-
 # Default target
+.PHONY: all
 all: test
 
 # Run all tests
+.PHONY: test
 test:
-	zig test src/zig/rsa.zig
-	@echo "All tests completed"
+	bun test tests/*.js
 
-# Clean build artifacts 
+# Generate test keys
+.PHONY: test-keys
+test-keys:
+	bun tests/data/generate-test-keys.js
+
+# Clean generated test files
+.PHONY: clean
 clean:
-	rm -rf zig-cache/
-	rm -rf zig-out/
+	rm -f tests/data/keypair.*.pub tests/data/keypair.*.priv
+
+.ONESHELL:
+# EOF
