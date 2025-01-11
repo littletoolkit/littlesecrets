@@ -220,7 +220,7 @@ class AsmCryptoRSA extends AsmCrypto {
     async loadPrivKey(path) {
         const response = await fetch(path);
         const data = new Uint8Array(await response.arrayBuffer());
-        const format = this.detectFormat(data);
+        const format = AsmCryptoRSA.detectFormat(data);
         return this.privKey(format, data);
     }
 }
