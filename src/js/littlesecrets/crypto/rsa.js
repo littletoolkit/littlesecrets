@@ -16,7 +16,6 @@ class AsmCryptoRSA extends AsmCrypto {
    * @returns {Promise<Uint8Array>}
    */
   async exportKey(key) {
-    console.log("KEY", key);
     const format = key.type === "private" ? "pkcs8" : "spki";
     const exported = await crypto.subtle.exportKey(format, key);
     return new Uint8Array(exported);
@@ -28,7 +27,7 @@ class AsmCryptoRSA extends AsmCrypto {
    * @returns {Promise<CryptoKey>}
    */
   async importPublicKey(keyData) {
-    return crypto.subtle.importKey(
+    return await crypto.subtle.importKey(
       "spki",
       keyData,
       {
@@ -46,7 +45,7 @@ class AsmCryptoRSA extends AsmCrypto {
    * @returns {Promise<CryptoKey>}
    */
   async importPrivateKey(keyData) {
-    return crypto.subtle.importKey(
+    return await crypto.subtle.importKey(
       "pkcs8",
       keyData,
       {
