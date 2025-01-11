@@ -136,11 +136,22 @@ class AsmCryptoRSA extends AsmCrypto {
   static PemToDer(pemData) {
     const textDecoder = new TextDecoder();
     const pemString = textDecoder.decode(pemData);
-    const base64 = pemString
-      .replace(/-----BEGIN.*?-----/, "")
-      .replace(/-----END.*?-----/, "")
-      .replace(/\s+/g, "");
-    return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    
+    // Extract the base64-encoded data between the header and footer
+    const matches = pemString.match(/-----BEGIN.*?-----\n([^-]*)\n-----END.*?-----/);
+    if (!matches || matches.length !== 2) {
+      throw new Error("Invalid PEM format");
+    }
+    
+    // Clean up the base64 string by removing whitespace
+    const base64 = matches[1].replace(/\s+/g, "");
+    
+    // Convert base64 to binary
+    try {
+      return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    } catch (error) {
+      throw new Error("Failed to decode base64 data: " + error.message);
+    }
   }
 
   /**
