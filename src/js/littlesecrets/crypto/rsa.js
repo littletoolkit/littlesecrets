@@ -111,7 +111,7 @@ class AsmCryptoRSA extends AsmCrypto {
      * @param {Uint8Array} data
      * @returns {'pem'|'der'|'ssh'} 
      */
-    static detectFormat(data) {
+    static DetectFormat(data) {
         // Check if it's PEM format (starts with -----BEGIN)
         const textDecoder = new TextDecoder();
         const text = textDecoder.decode(data.slice(0, 20));
@@ -133,7 +133,7 @@ class AsmCryptoRSA extends AsmCrypto {
      * @param {Uint8Array} pemData
      * @returns {Uint8Array}
      */
-    static pemToDer(pemData) {
+    static PemToDer(pemData) {
         const textDecoder = new TextDecoder();
         const pemString = textDecoder.decode(pemData);
         const base64 = pemString
@@ -148,7 +148,7 @@ class AsmCryptoRSA extends AsmCrypto {
      * @param {Uint8Array} sshData
      * @returns {Uint8Array}
      */
-    static sshToSpki(sshData) {
+    static SshToSpki(sshData) {
         // This is a simplified implementation
         // Real implementation would need to parse SSH key format
         // and construct proper SPKI structure
@@ -163,10 +163,10 @@ class AsmCryptoRSA extends AsmCrypto {
         
         switch (format.toLowerCase()) {
             case 'pem':
-                derData = AsmCryptoRSA.pemToDer(data);
+                derData = AsmCryptoRSA.PemToDer(data);
                 break;
             case 'ssh':
-                derData = AsmCryptoRSA.sshToSpki(data);
+                derData = AsmCryptoRSA.SshToSpki(data);
                 break;
             case 'der':
                 derData = data;
@@ -188,7 +188,7 @@ class AsmCryptoRSA extends AsmCrypto {
         
         switch (format.toLowerCase()) {
             case 'pem':
-                derData = this.pemToDer(data);
+                derData = AsmCryptoRSA.PemToDer(data);
                 break;
             case 'der':
                 derData = data;
@@ -208,7 +208,7 @@ class AsmCryptoRSA extends AsmCrypto {
     async loadPubKey(path) {
         const file = Bun.file(path);
         const data = new Uint8Array(await file.arrayBuffer());
-        const format = AsmCryptoRSA.detectFormat(data);
+        const format = AsmCryptoRSA.DetectFormat(data);
         return this.pubKey(format, data);
     }
 
@@ -218,7 +218,7 @@ class AsmCryptoRSA extends AsmCrypto {
     async loadPrivKey(path) {
         const file = Bun.file(path);
         const data = new Uint8Array(await file.arrayBuffer());
-        const format = AsmCryptoRSA.detectFormat(data);
+        const format = AsmCryptoRSA.DetectFormat(data);
         return this.privKey(format, data);
     }
 
