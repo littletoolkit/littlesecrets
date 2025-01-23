@@ -4,7 +4,8 @@ Naming conventions:
 - Globals are `UPPER_CASE`
 - Classes, Singletons, Structures, Types are `PascalCase`
 - When acronyms are `PascalCase`, like `Http`.
-- Functions and parameters are `camelCase`
+- Functions, methods and parameters are `camelCase`
+- Class methods should be `CamelCase`
 - Local variables are `snake_case`
 - Short lived variables should be short (`i`, `k`, `v`, `r`)
 - Long lived variables should be long (`encryption_format`)

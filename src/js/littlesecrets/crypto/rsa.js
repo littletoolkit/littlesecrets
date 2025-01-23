@@ -1,5 +1,6 @@
 import { AsmCrypto } from "../crypto.js";
 import { PubKey, PrivKey } from "../model.js";
+import { mkdtemp, rmdir } from "../utils/shell.js";
 
 /**
  * RSA implementation of asymmetric cryptography
@@ -132,45 +133,40 @@ class AsmCryptoRSA extends AsmCrypto {
    * Convert key using ssh-keygen with secure temp files
    * @param {Uint8Array} keyData Input key data
    * @param {string} inFormat Input format ('PEM'|'SSH')
-   * @param {string} outFormat Output format ('PEM'|'SSH') 
+   * @param {string} outFormat Output format ('PEM'|'SSH')
    * @returns {Promise<Uint8Array>}
    */
   static async convertKey(keyData, inFormat, outFormat) {
     // Create secure temp directory with user-only permissions
-    const tmpDir = await new Promise((resolve, reject) => {
-      import('node:crypto').then(crypto => {
-        const dir = `/tmp/littlesecrets-${crypto.randomBytes(16).toString('hex')}`;
-        Bun.spawn(["mkdir", "-m", "700", dir]).then(proc => {
-          if (proc.exitCode === 0) resolve(dir);
-          else reject(new Error("Failed to create secure temp directory"));
-        });
-      });
-    });
+    const tmpDir = await mkdtemp();
 
     try {
       const inPath = `${tmpDir}/key.${inFormat.toLowerCase()}`;
-      
+
       // Write input key with user-only permissions (0600)
       const file = Bun.file(inPath, { createMode: 0o600 });
       await Bun.write(file, keyData);
 
       // Convert using ssh-keygen
-      const proc = Bun.spawn(["ssh-keygen", "-f", inPath, "-e", "-m", outFormat], {
-        stdout: "pipe",
-        stderr: "pipe"
-      });
-      
+      const proc = Bun.spawn(
+        ["ssh-keygen", "-f", inPath, "-e", "-m", outFormat],
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+        }
+      );
+
       const output = await new Response(proc.stdout).arrayBuffer();
       const error = await new Response(proc.stderr).text();
-      
-      if (await proc.exited && error) {
+
+      if ((await proc.exited) && error) {
         throw new Error(`ssh-keygen failed: ${error}`);
       }
 
       return new Uint8Array(output);
     } finally {
-      // Clean up: remove temp directory and contents
-      await Bun.spawn(["rm", "-rf", tmpDir]);
+      console.log("TODO: CLeanup dir", tmpDir);
+      rmdir(tmpDir);
     }
   }
 
@@ -190,7 +186,7 @@ class AsmCryptoRSA extends AsmCrypto {
 
     // Convert SSH to PEM using ssh-keygen
     const pemData = await AsmCryptoRSA.convertKey(sshData, "SSH", "PEM");
-    
+
     // Import the PEM format
     return await crypto.subtle.importKey(
       "spki",
