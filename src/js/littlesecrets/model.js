@@ -28,6 +28,7 @@ class Secret {
   }
 }
 
+// What's that for?
 class Key {
   constructor(format, data) {
     this.format = format;
@@ -49,10 +50,11 @@ class PrivKey {
   }
 }
 
-class EnKey {
-  constructor(data) {
-    this.data = data;
+class KeyPair {
+  constructor(privKey, pubKey) {
+    this.privKey = privKey;
+    this.pubKey = pubKey;
   }
 }
 
-export { User, Group, Secret, MetaData, Key, PubKey, PrivKey, EnKey };
+export { User, Group, Secret, MetaData, Key, PubKey, PrivKey, KeyPair };

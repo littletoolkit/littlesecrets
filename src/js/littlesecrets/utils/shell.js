@@ -2,6 +2,8 @@ const Bun = globalThis.Bun;
 import { mkdir } from "node:fs/promises";
 import { rm } from "node:fs/promises";
 
+// --
+// Creates a temporary directory
 async function mkdtemp({
   prefix = undefined,
   suffix = undefined,
@@ -27,6 +29,8 @@ async function mkdtemp({
   throw new Error("Unable to create temporary directory");
 }
 
+// --
+// Recursively removes the given directory
 async function rmdir(path) {
   // Optionally remove the directory itself
   await rm(path, {
@@ -35,11 +39,14 @@ async function rmdir(path) {
   });
 }
 
+// --
+// Runs the given shell command and returns its output as text
 async function shell(command, options) {
   // SEE: https://bun.sh/docs/api/spawn
   const proc = Bun.spawn(command, options);
   // TODO: Should check status
   return await new Response(proc.stdout).text();
 }
-export { mkdtemp, rmdir };
+
+export { mkdtemp, rmdir, shell };
 // EOF
