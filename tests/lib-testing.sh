@@ -13,6 +13,10 @@ TEST_PATH=""
 declare -a TEST_ERRORS=()
 declare -a TEST_LOG=()
 declare -a TEST_CLEAN=()
+TEST_CLEAN+=("")
+TEST_COUNT=0
+TEST_CURRENT=0
+TEST_CURRENT_ERRORS=0
 
 # Test data is not public, so we restrict the umask.
 umask 0077
@@ -44,10 +48,10 @@ function test-start {
 }
 
 function test-diff {
-	local a=$(mktemp "$TEST_PATH"/var.XXX)
-	local b=$(mktemp "$TEST_PATH"/var.XXX)
-	echo "$1" > "$a"
-	echo "$2" > "$b"
+	local a=$(mktemp -p "$TEST_PATH" var.XXX)
+	local b=$(mktemp -p "$TEST_PATH" var.XXX)
+	echo "$1" >"$a"
+	echo "$2" >"$b"
 	echo "--- Expected/Retrieved"
 	diff "$a" "$b"
 	echo "---"
@@ -60,57 +64,77 @@ function test-expect {
 		test-fail "Output differ"
 		test-diff "$1" "$2"
 	else
-		test-succeeds 
+		test-succeeds
 	fi
 }
-function test-error {
-	echo "[$TEST_NAME] !!! $@"
+
+function test-step {
+	((TEST_COUNT += 1))
+	echo "[$TEST_NAME] $(test-id) === $@"
+	if [ "$TEST_CURRENT" != "$TEST_COUNT" ]; then
+		if [ "$TEST_CURRENT_ERRORS" != "${#TEST_ERRORS[*]}" ]; then
+			local errcount=${#TEST_ERRORS[*]}
+			test-error "FAIL $((errcount - TEST_CURRENT_ERRORS)) error(s)"
+		else
+			test-log "OK"
+		fi
+	fi
+	TEST_CURRENT=$TEST_COUNT
+	TEST_CURRENT_ERRORS="${#TEST_ERRORS[*]}"
+}
+
+function test-id {
+	printf "%03d" $TEST_CURRENT
 }
 
 function test-log {
-	echo "[$TEST_NAME] ... $@"
+	echo "[$TEST_NAME] $(test-id) ... $@"
 }
 
 function test-output {
-	echo "[$TEST_NAME] >>>"
+	echo "[$TEST_NAME] $(test-id) >>>"
 	echo "$@"
 	echo "<<<"
 }
 
+function test-error {
+	echo "[$TEST_NAME] $(test-id) !!! $@"
+}
+
 function test-run {
-		test-log ">>> $@"
-		local OUT="$(eval "$@")"
-		local STATUS="$?"
-		if [ "$STATUS" == 0 ]; then
-			test-succeeds
-		else
-			test-error "Command failed [$STATUS]: $@"
-			test-output "$OUT"
-			test-abort
-		fi
+	test-log ">>> $@"
+	local OUT="$(eval "$@")"
+	local STATUS="$?"
+	if [ "$STATUS" == 0 ]; then
+		test-succeeds
+	else
+		test-error "Command failed [$STATUS]: $@"
+		test-output "$OUT"
+		test-abort
+	fi
 }
 
 function test-abort {
 	echo "$@" >/dev/stderr
-	TEST_ERRORS+=("F")
+	TEST_ERRORS+=("F${TEST_CURRENT}")
 	test-cleanup
 }
 
 function test-succeeds {
 	if [ ! -s "$@" ]; then echo "... $*" >/dev/stderr; fi
-	TEST_LOG+=("✓")
+	TEST_LOG+=("✓${TEST_CURRENT}")
 }
 
 function test-fail {
 	if [ ! -z "$@" ]; then echo "!!! FAIL $*" >/dev/stderr; fi
 	TEST_LOG+=("×")
-	TEST_ERRORS+=("F")
+	TEST_ERRORS+=("F${TEST_CURRENT}")
 }
 
 function test-err {
 	echo "$@" >/dev/stderr
 	TEST_LOG+=("×")
-	TEST_ERRORS+=("E")
+	TEST_ERRORS+=("E${TEST_CURRENT}")
 }
 
 function test-data {
@@ -131,42 +155,50 @@ function test-cleanup {
 		rm -rf "$TEST_PATH"
 	fi
 	for path in "${TEST_CLEAN[@]}"; do
-		if [ -d "$path" ]; then
+		if [ -z "$path" ]; then
+			path=
+		elif [ -d "$path" ]; then
 			rm -rf "$path"
 		elif [ -e "$path" ]; then
 			unlink "$path"
 		fi
 	done
+	local sn=${#TEST_LOG[*]}
+	local en=${#TEST_ERRORS[@]}
+	local tn=$((sn + en))
 	if [ ${#TEST_ERRORS[@]} -eq 0 ]; then
-		test-log "EOK [${TEST_LOG[@]}]"
+		echo "[$TEST_NAME] EOK ($sn/$tn) $((100 * sn / tn))%: ${TEST_LOG[@]}" >&2
 		return 0
 	else
-		test-log "EFAIL [${TEST_LOG[@]}] ${TEST_ERRORS[@]}"
+		for err in "${TEST_ERRORS[@]}"; do
+			echo "$err" >&2
+		done
+		echo "[$TEST_NAME] EFAIL ($en/$tn) $((100 * sn / tn))%" >&2
 		return 1
 	fi
 }
 
 function test-xxx() {
-    local prefix="${2:-}"
-    local suffix="${1:-}"
-		local parent="${TEST_PATH:-/tmp}"
-		test-log "TEST PATH $TEST_PATH"
-    local tmp
-    if [[ -n "${prefix}" ]] && [[ -n "${suffix}" ]]; then
-        tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX${suffix}")
-    elif [[ -n "${prefix}" ]]; then
-        tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX")
-    else
-        tmp=$(mktemp)
-    fi
+	local prefix="${2:-}"
+	local suffix="${1:-}"
+	local parent="${TEST_PATH:-/tmp}"
+	test-log "TEST PATH $TEST_PATH"
+	local tmp
+	if [[ -n "${prefix}" ]] && [[ -n "${suffix}" ]]; then
+		tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX${suffix}")
+	elif [[ -n "${prefix}" ]]; then
+		tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX")
+	else
+		tmp=$(mktemp)
+	fi
 
-    if [[ $? -ne 0 ]]; then
-        test-abort "Failed to create temporary file"
-        exit 1
-    fi
-    TEST_CLEAN+=("${tmp}")
-		test-log "TEMP ${TEST_CLEAN[@]} ${tmp}"
-    echo "${tmp}"
+	if [[ $? -ne 0 ]]; then
+		test-abort "Failed to create temporary file"
+		exit 1
+	fi
+	TEST_CLEAN+=("${tmp}")
+	test-log "TEMP ${TEST_CLEAN[@]} ${tmp}"
+	echo "${tmp}"
 }
 
 function test-path {
@@ -192,7 +224,7 @@ function test-noempty {
 	for path in "$@"; do
 		if [ ! -f "$path" ]; then
 			test-fail "path does not exists: $path"
-    elif [ ! -s "$path" ]; then
+		elif [ ! -s "$path" ]; then
 			test-fail "path is empty: $path"
 		else
 			test-succeeds
