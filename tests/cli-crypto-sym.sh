@@ -15,16 +15,20 @@ test-expect "$KEY" $(echo -n "$KEY" | ls_encode | ls_decode)
 
 # Asserts the transparent of symmetric encoding
 test-step "Symmetric Encryption transparency"
-SECRET_ENC=$(ls_encrypt_sym "$(echo -n "$SECRET" | ls_encode)" "$KEY")
-test-expect "$(ls_decrypt_sym "$SECRET_ENC" "$KEY")" "$SECRET"
+SECRET_ENC=$(echo -n "$SECRET" | ls_encrypt_sym "$KEY")
+SECRET_DEC=$(echo -n "$SECRET_ENC" | ls_decrypt_sym "$KEY")
+test-expect "$SECRET_DEC" "$SECRET"
 
 test-step "Asymmetric Keypair"
-test-expect "$(ls_keyid "$(ls_privkey)")" "private:pkcs8+rsa:valid"
-test-expect "$(ls_pubkey | ls_keyid)" "public:spki"
+test-expect "$(ls_key_id "$(ls_privkey_path)")" "private:pkcs8+rsa:valid"
+test-expect "$(ls_pubkey_path | ls_key_id)" "public:spki:"
 
 test-step "Asymmetric Encryption transparency"
-SECRET_ENC=$(ls_encrypt_asym "$(echo -n "$SECRET" | ls_encode)")
-test-expect "$(ls_decrypt_asym "$SECRET_ENC")" "$SECRET"
+echo "PUB:$(ls_pubkey_path)"
+echo "PRIV:$(ls_privkey_path)"
+SECRET_ENC=$(echo -n "$SECRET" | ls_encrypt_asym "$(ls_pubkey_path)")
+SECRET_DEC=$(echo -n "$SECRET_ENC" | ls_decrypt_asym "$(ls_privkey_path)")
+test-expect "$SECRET_DEC" "$SECRET"
 
 test-cleanup
 # EOF

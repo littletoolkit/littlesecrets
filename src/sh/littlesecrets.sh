@@ -4,6 +4,8 @@
 # A simplified, reduced version of LittleSecrets that works only with
 # the shell and simple tools.
 
+set -euo pipefail
+
 # --
 # We load the library expected to be in `LITTLESECRETS_PATH`
 LITTLESECRETS_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -17,7 +19,9 @@ LS_CLEANUP+=("")
 
 # --
 # And define the configuration
+LITTLESECRETS_USER=${LITTLESECRETS_USER:-$USER}
 LITTLESECRETS_SSH_KEY=${LITTLESECRETS_SSH_KEY:-$HOME/.ssh/id_rsa}
+LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-.littlesecrets}
 
 # -----------------------------------------------------------------------------
 #
@@ -46,6 +50,14 @@ function ls_log_error {
 	return 0
 }
 
+function ls_log_output_start {
+	echo -n "${GRAY}" >&2
+}
+
+function ls_log_output_end {
+	echo -n "${RESET}" >&2
+}
+
 function ls_log_stack {
 	local line=""
 	local frame=""
@@ -57,7 +69,7 @@ function ls_log_stack {
 			line="$(echo "$frame" | cut -d' ' -f1)"
 			func="$(echo "$frame" | cut -d' ' -f2)"
 			path="$(echo "$frame" | cut -d' ' -f3-)"
-			>&2 echo "${ORANGE} ▸  #${i} ${YELLOW}${BOLD}$func() ${RESET}$(fmt-relpath "$path"):$line"
+			>&2 echo "${ORANGE} ▸  #${i} ${YELLOW}${BOLD}$func() ${RESET}$path:$line"
 		fi
 	done
 }
@@ -90,6 +102,63 @@ function ls_mkstemp {
 }
 
 # --
+# - If PATH contains a path separator, resolve the path relative to the current directory
+# - Otherwise find a matching link or path in all ancestors, returning the closes one
+function ls_find {
+	local search_path="$1"
+	# If path contains separator, resolve relative to current dir
+	if [[ "$search_path" == */* ]]; then
+		if [ -e "$search_path" ]; then
+			echo "$search_path"
+			return 0
+		fi
+		return 1
+	fi
+	# Otherwise search up through ancestors
+	local current_dir="$PWD"
+	while true; do
+		if [ -e "$current_dir/$search_path" ]; then
+			echo "$current_dir/$search_path"
+			return 0
+		fi
+		if [ "$current_dir" = "/" ]; then
+			break
+		fi
+		current_dir="$(dirname "$current_dir")"
+	done
+	return 1
+}
+
+function ls_mkparent {
+	for path in "$@"; do
+		local parent="$(dirname "$path")"
+		if [ ! -e "$parent" ]; then
+			mkdir -p "$parent"
+		fi
+	done
+}
+
+function ls_ispath {
+	if [[ "$1" != "${1/$'\n'/}" ]]; then
+		return 1
+	elif [ -e "$1" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+function ls_unlink {
+	for path in "$@"; do
+		if [ -z "$path" ]; then
+			path=
+		elif [ -e "$path" ]; then
+			unlink "$path"
+		fi
+	done
+}
+
+# --
 # Ensures that temporary files are cleaned up
 function ls_cleanup {
 	for path in "${LS_CLEANUP[@]}"; do
@@ -102,6 +171,35 @@ function ls_cleanup {
 	done
 }
 
+# --
+# Echoes `TEXT` if any `EXPR` (glob) matches `TEXT`
+function ls_match { # TEXT EXPR…
+	local text="$1"
+	shift # Remove first argument, leaving only the patterns
+	for pattern in "$@"; do
+		if [[ "$text" == $pattern ]]; then
+			echo "$text"
+			return 0
+		fi
+	done
+	return 1
+}
+
+function ls_match_item {
+	local store=$(ls_store)
+	local item=
+	local path="$1"
+	shift
+	if [ -n "$store" ]; then
+		for item_path in ${store}/${path}; do
+			item="$(basename "$(dirname "$item_path")")"
+			if [ -n "$(ls_match "$item" "$@")" ]; then
+				echo "$item"
+			fi
+		done
+	fi
+}
+
 # -----------------------------------------------------------------------------
 #
 # KEYS
@@ -110,7 +208,7 @@ function ls_cleanup {
 
 # --
 # Ensures that the `LITTLESECRETS_SSH_KEY` exists and is in the right format.
-function ls_ssh_keypair_ensure {
+function ls_ssh_keypair_ensure { # KEYPATH
 	local privkey_path="${1:-$LITTLESECRETS_SSH_KEY}"
 	local privkey_pem_path="${privkey_path}.pem"
 	local pubkey_pem_path="${privkey_path}.pem.pub"
@@ -118,7 +216,9 @@ function ls_ssh_keypair_ensure {
 	if [ ! -e "$privkey_path" ]; then
 		ls_log_message "Missing SSH RSA key: $privkey_path"
 		ls_log_action "Creating SSH key using 'ssh-keygen -t rsa -b 4096'"
+		ls_log_output_start
 		ssh-keygen -q -t rsa -b 4096 -N "" -f "$privkey_path" >&2
+		ls_log_output_end
 	fi
 	ssh-keygen -y -P "" -f "$privkey_path" >/dev/null 2>&1
 	if [ ! $? -eq 0 ]; then
@@ -132,24 +232,149 @@ function ls_ssh_keypair_ensure {
 		# NOTE: ssh-keygen will overwrite the key, so we copy it
 		cp -a "$privkey_path" "$privkey_pem_path.ssh"
 		# SSH key is in DER format, we need PEM
+		ls_log_output_start
 		ssh-keygen -q -p -m pem -N '' -f "${privkey_pem_path}.ssh" >&2
 		openssl rsa -in "${privkey_pem_path}.ssh" -out "${privkey_pem_path}" >&2
+		ls_log_output_end
 		unlink "${privkey_pem_path}.ssh"
 	fi
 	# Ensures PEM public key exists, and is up to date
 	if [ ! -e "$pubkey_pem_path" ] || [ "$privkey_pem_path" -nt "$pubkey_pem_path" ]; then
 		ls_log_action "Deriving PKCS8 public key from RSA PEM private key: $pubkey_pem_path"
+		ls_log_output_start
 		openssl rsa -in "$privkey_pem_path" -pubout -out "$pubkey_pem_path" >&2
+		ls_log_output_end
 	fi
 	echo "${privkey_pem_path}"
 }
 
-function ls_privkey {
-	ls_ssh_keypair_ensure
+# FIXME: These two functions are a bit dangerous, and don't really work
+# in all cases that should be supported.
+# --
+# Returns the normalize private key path for the key at the given path
+function ls_privkey_path { #KEYPATH
+	ls_ssh_keypair_ensure "$@"
 }
 
-function ls_pubkey {
-	echo "$(ls_ssh_keypair_ensure).pub"
+# --
+# Returns the normalized public key path for the key at the given path
+function ls_pubkey_path { #KEYPATH
+	echo "$(ls_ssh_keypair_ensure "$@").pub"
+}
+
+# --
+# Imports the private key at the given file, outputting the normalized key value.
+# Will always return the private key as a its contents, not as a file.
+function ls_privkey_import { # KEYPATH
+	local keypath="${1:-$(ls_pubkey_path)}"
+	local keyfmt=
+	local keypath_tmp=
+	local keyout_tmp=
+	if [ -e "$1" ]; then
+		keyfmt="$(ls_key_id "$keypath")"
+	else
+		keypath_tmp="$(ls_mkstemp)"
+		echo -n "$keypath" | ls_decode >"$keypath_tmp"
+		keypath="$keypath_tmp"
+		keyfmt="$(ls_key_id "$keypath")"
+	fi
+	local res=0
+	case "$keyfmt" in
+	# We obviously only support private keys here
+	private:ssh:*)
+		ls_log_action "XXX $keypath"
+		keyout_tmp=$(ls_mkstemp)
+		if ls_ispath "$keypath"; then
+			cp -a "$keypath" "$keyout_tmp"
+		else
+			echo "$keypath" >"$keyout_tmp"
+		fi
+		ls_log_output_start
+		ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2
+		ls_log_output_end
+		openssl rsa -in "$keyout_tmp" -out /dev/stdout
+		unlink "$keyout_tmp"
+		;;
+	private:pkcs8*)
+		# That's what we want
+		cat "$keypath"
+		;;
+	*)
+		res=1
+		;;
+	esac
+	ls_unlink "$keypath_tmp" "$keyout_tmp"
+	return $res
+}
+
+# --
+# Imports the key at the given file, outputting the normalized key value.
+function ls_pubkey_import { #KEYPATH
+	local keypath="${1:-$(ls_pubkey_path)}"
+	local keyfmt=
+	local keypath_tmp=
+	local keyout_tmp=
+	if [ -e "$1" ]; then
+		keyfmt="$(ls_key_id "$keypath")"
+	else
+		keypath_tmp="$(ls_mkstemp)"
+		echo -n "$keypath" | ls_decode >"$keypath_tmp"
+		keypath="$keypath_tmp"
+		keyfmt="$(ls_key_id "$keypath")"
+	fi
+	local res=0
+	case "$keyfmt" in
+	private:ssh:*)
+		keyout_tmp=$(ls_mkstemp)
+		cp -a "$keypath" "${keyout_tmp}"
+		ls_log_output_start
+		ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2
+		openssl rsa -in "$keyout_tmp" -pubout
+		ls_log_output_end
+		unlink "$keyout_tmp"
+		;;
+	private:pkcs8*)
+		openssl rsa -in "$keypath" -pubout /dev/stdout
+		;;
+	public:ssh+rsa*)
+		ssh-keygen -f "$keypath" -e -m pem
+		;;
+	public:spki*)
+		cat "$keypath"
+		;;
+	*)
+		res=1
+		;;
+	esac
+	ls_unlink "$keypath_tmp" "$keyout_tmp"
+	return $res
+}
+
+function ls_key_id_match { #TYPE FORMATS
+	local text="$1"
+	shift
+	# For each type:format specification
+	for spec in "$@"; do
+		# Split into type and formats
+		local type="${spec%%:*}"
+		local formats="${spec#*:}"
+		# Check if text starts with type:
+		if [[ "$text" == "$type:"* ]]; then
+			# Extract the format part from text (between first and second colon)
+			local text_format="${text#*:}"
+			text_format="${text_format%%:*}"
+			# Check each required format
+			local all_found=1
+			IFS='+' read -ra required_formats <<<"$formats"
+			for fmt in "${required_formats[@]}"; do
+				if [[ "$text_format" != *"$fmt"* ]]; then
+					return 1
+				fi
+			done
+			return 0
+		fi
+	done
+	return 1
 }
 
 # --
@@ -157,7 +382,7 @@ function ls_pubkey {
 # 1) Key type, `public` or `private` or `unknown`
 # 2) Key format, `+` separated, like `pkcs8+rsa`
 # 3) `valid` if the format was validated, otherwise nothing
-function ls_keyid {
+function ls_key_id {
 	# Function to analyze a single file
 	local file="${1:-}"
 	if [ -z "$file" ]; then
@@ -166,44 +391,50 @@ function ls_keyid {
 	local result=""
 
 	# Skip if not a regular file
-	[ ! -f "$file" ] && return
+	if [ ! -f "$file" ]; then
+		echo "!nofile=$file"
+		return 1
+	fi
 
-	# Check if file is binary or text
-	if file "$file" | grep -q "ASCII text"; then
-		# Check for SSH public key format
-		if grep -q "^ssh-" "$file" 2>/dev/null; then
-			if grep -q "ssh-rsa" "$file"; then
-				echo -n "public:ssh+rsa"
-			elif grep -q "ecdsa-sha2" "$file"; then
-				echo -n "public:ssh+ecdsa"
-			fi
-		# Check for PEM format
-		elif grep -q "BEGIN" "$file" 2>/dev/null; then
-			if grep -q "BEGIN RSA PRIVATE KEY" "$file"; then
-				echo -n "private:rsa+pem+pkcs1"
-			elif grep -q "BEGIN EC PRIVATE KEY" "$file"; then
-				echo -n "private:ecdsa+pem+sec1"
-			elif grep -q "BEGIN PRIVATE KEY" "$file"; then
-				echo -n "private:pkcs8"
-			elif grep -q "BEGIN PUBLIC KEY" "$file"; then
-				echo -n "public:spki"
-			elif grep -q "BEGIN OPENSSH PRIVATE KEY" "$file"; then
-				echo -n "private:ssh"
-			fi
+	# Check for SSH public key format
+	if grep -q "^ssh-" "$file" 2>/dev/null; then
+		if grep -q "^ssh-rsa" "$file"; then
+			echo -n "public:ssh+rsa"
+		elif grep -q "^ssh-ed25519" "$file"; then
+			echo -n "public:ssh+ed25519"
+		else
+			echo -n "public:ssh+unknown"
 		fi
+	# Check for PEM format
+	elif grep -q "BEGIN" "$file" 2>/dev/null; then
+		if grep -q "BEGIN RSA PRIVATE KEY" "$file"; then
+			echo -n "private:rsa+pem+pkcs1"
+		elif grep -q "BEGIN EC PRIVATE KEY" "$file"; then
+			echo -n "private:ecdsa+pem+sec1"
+		elif grep -q "BEGIN PRIVATE KEY" "$file"; then
+			echo -n "private:pkcs8"
+		elif grep -q "BEGIN PUBLIC KEY" "$file"; then
+			echo -n "public:spki"
+		elif grep -q "BEGIN OPENSSH PRIVATE KEY" "$file"; then
+			echo -n "private:ssh+der"
+		else
+			echo -n "unknown:unknown"
+		fi
+	else
+		echo -n "unknown:unknown"
+	fi
 
-		# Additional OpenSSL analysis
-		if command -v openssl >/dev/null 2>&1; then
-			if openssl rsa -in "$file" -noout 2>/dev/null; then
-				echo "+rsa:valid"
-			elif openssl ec -in "$file" -noout 2>/dev/null; then
-				echo "+ecdsa:valid"
-			fi
+	# Additional OpenSSL analysis
+	if command -v openssl >/dev/null 2>&1; then
+		if openssl rsa -in "$file" -noout 2>/dev/null; then
+			echo "+rsa:valid"
+		elif openssl ec -in "$file" -noout 2>/dev/null; then
+			echo "+ecdsa:valid"
 		else
 			echo ":"
 		fi
 	else
-		echo "unknown"
+		echo ":"
 	fi
 }
 
@@ -212,6 +443,17 @@ function ls_keyid {
 # CRYPTO
 #
 # -----------------------------------------------------------------------------
+
+function ls_encoded {
+	case "$1" in
+	@LS:*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
 
 # --
 # Safely encodes binary data to be stored in a variable
@@ -236,55 +478,53 @@ function ls_decode {
 # --
 # Generates a symmetric key usable for a secret. The key is encoded to be
 # stored in a variable.
-function ls_key_sym {
+function ls_key {
 	# RSA 4096bits -> 512bytes
 	# PKCS requires 11bytes padding, OAEP 42bytes
 	openssl rand "${1:-470}" | ls_encode
 }
 
 # --
-# Encrypts `1:SECRET` (encoded) with `2:KEY` (encoded), returning the
-# encrypted secrets (encoded)
-function ls_encrypt_sym {
-	local secret="$1"
-	local key_path=$(ls_mkstemp "$2")
-	echo -n "$secret" | ls_decode | openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass "file:$key_path" | ls_encode
+function ls_encrypt_sym { # KEY
+	local key_path=$(ls_mkstemp "$1")
+	if ! openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
+		ls_log_error "Could not encrypt secret"
+	fi
 	unlink "$key_path"
 }
 
 # --
 # Decrypts `1:SECRET` (encoded) with `2:KEY` (encoded), returning the
 # decrypted secrets (unencoded)
-function ls_decrypt_sym {
-	local encrypted="$1"
-	local key_path="$(ls_mkstemp "$2")"
-	if ! echo -n "$encrypted" | ls_decode | openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
+function ls_decrypt_sym { # KEY
+	local key_path=
+	local res=0
+	local key_path="$(ls_mkstemp "$1")"
+	if ! openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
 		ls_log_error "Could not decrypt secret"
-	else
-		unlink "$key_path"
+		res=1
 	fi
-
+	ls_unlink "$key_path"
+	return "$res"
 }
 
 # --
 # Encrypts the given secret using the given public key. When the key is empty
 # it will be sourced using `ls_pubkey`, otherwise it can be given either
-# as a path, or as a value (encoded or not). This returns the encrypted secret,
-# encoded.
-function ls_encrypt_asym {
-	local secret="$1"
-	local pubkey="${2:-}"
-	local pubkey_path
+# as a path, or as a value. This returns the encrypted secret.
+function ls_encrypt_asym { # PUBKEY?
+	local pubkey="${1:-}"
+	local pubkey_path=
 	local pubkey_temp=0
 	if [ -z "$pubkey" ]; then
-		pubkey_path="$(ls_pubkey)"
+		pubkey_path="$(ls_pubkey_path)"
 	elif [ -e "$pubkey" ]; then
 		pubkey_path="$pubkey"
 	else
 		pubkey_path="$(ls_mkstemp "$pubkey")"
 		pubkey_temp=1
 	fi
-	if ! echo -n "$secret" | ls_decode | openssl pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in /dev/stdin -out /dev/stdout | ls_encode; then
+	if ! openssl pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in /dev/stdin -out /dev/stdout; then
 		ls_log_error "Could not encrypt secret"
 	fi
 	if [ "$pubkey_temp" == 1 ]; then
@@ -295,27 +535,240 @@ function ls_encrypt_asym {
 # --
 # Decrypts the given encrypted secret using the given private key. When the key is empty
 # it will be sourced using `ls_privkey`, otherwise it can be given either
-# as a path, or as a value (encoded or not). This returns the decypted secret, unencoded.
-function ls_decrypt_asym {
-	local encrypted="$1"
-	local privkey="${2:-}"
-	local privkey_path
+# as a path, or as a value. This returns the decypted secret.
+function ls_decrypt_asym { # PRIVKEY?
+	local privkey="${1:-}"
+	local privkey_path=
 	local privkey_temp=0
 	if [ -z "$privkey" ]; then
-		privkey_path="$(ls_privkey)"
+		privkey_path="$(ls_privkey_path)"
 	elif [ -e "$privkey" ]; then
 		privkey_path="$privkey"
 	else
 		privkey_path="$(ls_mkstemp "$privkey")"
 		privkey_temp=1
 	fi
-	if ! echo -n "$encrypted" | ls_decode | openssl pkeyutl -decrypt -inkey "$privkey_path" -in /dev/stdin -out /dev/stdout; then
+	if ! openssl pkeyutl -decrypt -inkey "$privkey_path" -in /dev/stdin -out /dev/stdout; then
 		ls_log_error "Could not decrypt secret"
 	fi
 	if [ "$privkey_temp" == 1 ]; then
 		unlink "$pubkey_path"
 	fi
 }
+
+# -----------------------------------------------------------------------------
+#
+# API
+#
+# -----------------------------------------------------------------------------
+
+# =============================================================================
+# STORE
+# =============================================================================
+
+# --
+# Finds a matching store
+function ls_store {
+	ls_find "$LITTLESECRETS_STORE"
+}
+
+function ls_store_init {
+	# TODO: Should support argument
+	ls_store_ensure
+}
+
+# --
+# Ensures that the store exists
+function ls_store_ensure {
+	local store=$(ls_store)
+	if [ -z "$store" ]; then
+		store="$(basename "$LITTLESECRETS_STORE")"
+		mkdir -p "$store"
+	fi
+	echo "$store"
+}
+
+# =============================================================================
+# USERS
+# =============================================================================
+
+# --
+# Lists all the users in the store
+function ls_user_list { # EXPR…
+	ls_match_item "user/*.pubkey" "$@"
+}
+
+function ls_user_registered { # USER? KEY?
+	local store="$(ls_store)"
+	if [ -z "$store" ]; then return 1; fi
+	local keypath="$store/user/${1:-$LITTLESECRETS_USER}.pubkey"
+	if [ -e "$keypath" ]; then
+		echo "$keypath"
+		return 0
+	else
+		return 1
+	fi
+}
+
+# --
+# Registers user with the given `KEY`
+function ls_user_register { # USER? KEY?
+	local store="$(ls_store_ensure)"
+	local user="${1:-$LITTLESECRETS_USER}"
+	local key="$(ls_pubkey_import "${2:-$LITTLESECRETS_SSH_KEY}")"
+	local user_key_path="$store/user/$user.pubkey"
+	if [ -e "$user_key_path" ]; then
+		if [ ! cmd -s "$user_key_path" <(echo "$key") ]; then
+			# We're overriding a key
+			# TODO: We should probably warn here that the previous secrets
+			# will likely be invalidated
+			echo "$key" >"$user_key_path"
+		fi
+	else
+		# That's a new key
+		mkdir -p "$(dirname "$user_key_path")"
+		echo "$key" >"$user_key_path"
+	fi
+	echo "$user_key_path"
+	return 0
+}
+
+function ls_user_name {
+	echo "$LITTLESECRETS_USER"
+}
+
+# --
+# Returns the public key for the given KEY (if present), otherwise
+# retrieves the public key for the given user (registered). The
+# key may be returned as a path, or as a data.
+function ls_user_pubkey { # USER? KEY?
+	if [ -n "${2:-}" ]; then
+		ls_pubkey_import "${2:-$LITTLESECRETS_SSH_KEY}"
+	else
+		local user="${1:-$LITTLESECRETS_USER}"
+		local store="$(ls_store)"
+		if [ -n "$store" ]; then
+			local keypath="$(ls_store)/user/$user.pubkey"
+			if [ -e "$keypath" ]; then
+				echo "$keypath"
+				return 0
+			else
+				return 1
+			fi
+		fi
+	fi
+}
+
+function ls_user_privkey { # KEY?
+	local keypath="${1:-$LITTLESECRETS_SSH_KEY}"
+	local keypath_fmt=$(ls_key_id "$keypath")
+	local keypath_pem="$keypath.pem"
+	local keypath_pem_fmt=$(ls_key_id "$keypath_pem")
+	if [[ "$keypath_fmt" == private:pkcs8* ]]; then
+		# The given keypath is already in the right format
+		echo "$keypath"
+		return 0
+	elif [[ "$keypath_pem_fmt" == private:pkcs8* ]]; then
+		# TODO: We should issue a warning if the PEM file is older than than the key
+		# The alternate keypath is in the right formt
+		echo "$keypath_pem"
+	else
+		# Otherwise we import the privkey
+		ls_privkey_import "$1"
+	fi
+}
+
+# =============================================================================
+# SECRETS
+# =============================================================================
+
+function ls_secret_list {
+	ls_match_item "secret/*/secret.enc" "$@"
+}
+
+function ls_secret_write { # SECRET
+	local secret="$1"
+	local secret_path="$(ls_store)/secret/$secret/secret.enc"
+	local secret_key=$(echo -n "HELLO" | ls_encode) #$(ls_key)"
+	# First step, we encrypt the secret with the secret key
+	ls_mkparent "$secret_path"
+	ls_encrypt_sym "$secret_key" </dev/stdin >"$secret_path"
+	# Second step, we encrypt the secret key with the user's public key
+	local user=$(ls_user_name)
+	local user_pubkey=$(ls_user_pubkey | ls_decode)
+	local secret_key_path="$(ls_store)/secret/$secret/$user.key"
+	ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
+	echo "$secret_path|$secret_key_path"
+}
+
+function ls_secret_add { # SECRET CONTENT?
+	echo -n "$2" | ls_secret_write "$1"
+}
+
+function ls_secret_key { # SECRET
+	# We locate the secret
+	local secret="$1"
+	local store="$(ls_store)"
+	if [ -z "$store" ]; then return 1; fi
+	local secret_path="$store/secret/$secret/secret.enc"
+	if [ ! -e "$secret_path" ]; then return 1; fi
+
+	# First step, we decrypt the secret key with the user's private key
+	local user=$(ls_user_name)
+	local user_privkey=$(ls_user_privkey | ls_decode)
+	local secret_key_path="$store/secret/$secret/$user.key"
+	if [ ! -e "$secret_key_path" ]; then return 1; fi
+	echo "DECRYPT $secret_key_path with $user_privkey"
+	ls_decrypt_asym "$user_privkey" <"$secret_key_path"
+}
+
+function ls_secret_get { # SECRET
+	echo XXX
+	# # 	# We locate the secret
+	# local secret="$1"
+	# local store="$(ls_store)"
+	# local secret_path="$store/secret/$secret/secret.enc"
+	# if [ ! -e "$secret_path" ]; then return 0; fi
+
+	# # First step, we decrypt the secret key with the user's private key
+	# local user=$(ls_user_name)
+	# local user_privkey=$(ls_user_privkey | ls_decode)
+	# local secret_key_path="$store/secret/$secret/$user.key"
+	# if [ ! -e "$secret_key_path" ]; then return 0; fi
+	# local secret_key=$(ls_decrypt_asym "$user_privkey" <"$secret_key_path")
+
+	# echo "SECRET KEY [$secret_key]"
+
+	# # Second step, we decrypt the secret with
+	# local secret="$(ls_decrypt_sym "$secret_key" <"$secret_path")"
+	# echo "$secret"
+	# return 1
+}
+
+# -----------------------------------------------------------------------------
+#
+# CLI
+#
+# -----------------------------------------------------------------------------
+
+function ls_set {
+	local secret="$1"
+	local content="${1:-}"
+}
+
+function ls_get {
+	local secret="$1"
+}
+
+function ls_list {
+	echo X
+}
+
+# -----------------------------------------------------------------------------
+#
+# MAIN
+#
+# -----------------------------------------------------------------------------
 
 trap ls_cleanup EXIT INT TERM
 trap ls_on_error ERR
