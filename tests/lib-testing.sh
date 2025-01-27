@@ -52,9 +52,9 @@ function test-diff {
 	local b=$(mktemp -p "$TEST_PATH" var.XXX)
 	echo "$1" >"$a"
 	echo "$2" >"$b"
-	echo "--- Expected/Retrieved"
-	diff "$a" "$b"
-	echo "---"
+	echo "--- Expected/Retrieved" >&2
+	diff "$a" "$b" >&2
+	echo "---" >&2
 	unlink "$a"
 	unlink "$b"
 }
@@ -64,13 +64,13 @@ function test-expect {
 		test-fail "Output differ"
 		test-diff "$1" "$2"
 	else
-		test-succeeds
+		test-ok
 	fi
 }
 
 function test-step {
 	((TEST_COUNT += 1))
-	echo "[$TEST_NAME] $(test-id) === $@"
+	echo "[$TEST_NAME] $(test-id) === $@" >&2
 	if [ "$TEST_CURRENT" != "$TEST_COUNT" ]; then
 		if [ "$TEST_CURRENT_ERRORS" != "${#TEST_ERRORS[*]}" ]; then
 			local errcount=${#TEST_ERRORS[*]}
@@ -88,17 +88,21 @@ function test-id {
 }
 
 function test-log {
-	echo "[$TEST_NAME] $(test-id) ... $@"
+	echo "[$TEST_NAME] $(test-id) ... $@" >&2
 }
 
 function test-output {
-	echo "[$TEST_NAME] $(test-id) >>>"
-	echo "$@"
-	echo "<<<"
+	echo "[$TEST_NAME] $(test-id) >>>" >&2
+	echo "$@" >&2
+	echo "<<<" >&2
+}
+
+function test-info {
+	echo "[$TEST_NAME] $(test-id)   → $@" >&2
 }
 
 function test-error {
-	echo "[$TEST_NAME] $(test-id) !!! $@"
+	echo "[$TEST_NAME] $(test-id) !!! $@" >&2
 }
 
 function test-run {
@@ -106,7 +110,7 @@ function test-run {
 	local OUT="$(eval "$@")"
 	local STATUS="$?"
 	if [ "$STATUS" == 0 ]; then
-		test-succeeds
+		test-ok
 	else
 		test-error "Command failed [$STATUS]: $@"
 		test-output "$OUT"
@@ -115,24 +119,24 @@ function test-run {
 }
 
 function test-abort {
-	echo "$@" >/dev/stderr
+	echo "$@" >&2
 	TEST_ERRORS+=("F${TEST_CURRENT}")
 	test-cleanup
 }
 
-function test-succeeds {
-	if [ ! -s "$@" ]; then echo "... $*" >/dev/stderr; fi
+function test-ok {
+	if [ ! -s "$@" ]; then echo "... $*" >&2; fi
 	TEST_LOG+=("✓${TEST_CURRENT}")
 }
 
 function test-fail {
-	if [ ! -z "$@" ]; then echo "!!! FAIL $*" >/dev/stderr; fi
+	if [ ! -z "$@" ]; then echo "!!! FAIL $*" >&2; fi
 	TEST_LOG+=("×")
 	TEST_ERRORS+=("F${TEST_CURRENT}")
 }
 
 function test-err {
-	echo "$@" >/dev/stderr
+	echo "$@" >&2
 	TEST_LOG+=("×")
 	TEST_ERRORS+=("E${TEST_CURRENT}")
 }
@@ -140,7 +144,7 @@ function test-err {
 function test-data {
 	local data_path="$BASE_PATH/tests/data/$1"
 	if [ -n "$1" ] && [ -e "$data_path" ]; then
-		echo -n "$data_path"
+		echo -n "$data_path" >&2
 	elif [ -z "$1" ]; then
 		test-err "-!- ERR 'test-data FILENAME' is missing FILENAME argument"
 		exit 1
@@ -166,7 +170,9 @@ function test-cleanup {
 	local sn=${#TEST_LOG[*]}
 	local en=${#TEST_ERRORS[@]}
 	local tn=$((sn + en))
-	if [ ${#TEST_ERRORS[@]} -eq 0 ]; then
+	if [ "$tn" == 0 ]; then
+		echo "[$TEST_NAME] EOK (0/0)" >&2
+	elif [ ${#TEST_ERRORS[@]} -eq 0 ]; then
 		echo "[$TEST_NAME] EOK ($sn/$tn) $((100 * sn / tn))%: ${TEST_LOG[@]}" >&2
 		return 0
 	else
@@ -215,7 +221,7 @@ function test-exist {
 		if [ ! -e "$path" ]; then
 			test-fail "path does not exists: $path"
 		else
-			test-succeeds
+			test-ok
 		fi
 	done
 }
@@ -227,7 +233,7 @@ function test-noempty {
 		elif [ ! -s "$path" ]; then
 			test-fail "path is empty: $path"
 		else
-			test-succeeds
+			test-ok
 		fi
 	done
 }
@@ -240,7 +246,7 @@ function test-empty {
 	if [ -s "$value" ]; then
 		test-fail "$failure"
 	else
-		test-succeeds
+		test-ok
 	fi
 }
 

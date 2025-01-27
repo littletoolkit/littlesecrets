@@ -3,4 +3,5 @@
 .littlesecrets
 zig-cache
 .env
+tmp.*
 docs/scratchpad.md

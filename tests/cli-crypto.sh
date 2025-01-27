@@ -20,14 +20,13 @@ SECRET_DEC=$(echo -n "$SECRET_ENC" | ls_decrypt_sym "$KEY")
 test-expect "$SECRET_DEC" "$SECRET"
 
 test-step "Asymmetric Keypair"
-test-expect "$(ls_key_id "$(ls_privkey_path)")" "private:pkcs8+rsa:valid"
+test-expect "$(ls_key_id "$(ls_privkey_path)")" "private:rsa+pem+pkcs8:valid=rsa"
 test-expect "$(ls_pubkey_path | ls_key_id)" "public:spki:"
 
 test-step "Asymmetric Encryption transparency"
-echo "PUB:$(ls_pubkey_path)"
-echo "PRIV:$(ls_privkey_path)"
-SECRET_ENC=$(echo -n "$SECRET" | ls_encrypt_asym "$(ls_pubkey_path)")
-SECRET_DEC=$(echo -n "$SECRET_ENC" | ls_decrypt_asym "$(ls_privkey_path)")
+# NOTE: If you don't use ls_encode/ls_decode, then the contents will be mangled
+SECRET_ENC=$(echo -n "$SECRET" | ls_encrypt_asym "$(ls_pubkey_path)" | ls_encode)
+SECRET_DEC=$(echo -n "$SECRET_ENC" | ls_decode | ls_decrypt_asym "$(ls_privkey_path)")
 test-expect "$SECRET_DEC" "$SECRET"
 
 test-cleanup
