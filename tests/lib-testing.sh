@@ -61,10 +61,10 @@ function test-diff {
 
 function test-expect {
 	if [ "$1" != "$2" ]; then
-		test-fail "Output differ"
+		test-fail "Output differ" "${3:-}"
 		test-diff "$1" "$2"
 	else
-		test-ok
+		test-ok "${3:-}"
 	fi
 }
 
@@ -101,6 +101,10 @@ function test-info {
 	echo "[$TEST_NAME] $(test-id)   → $@" >&2
 }
 
+function test-prefix {
+	echo -n "[$TEST_NAME] $(test-id)"
+}
+
 function test-error {
 	echo "[$TEST_NAME] $(test-id) !!! $@" >&2
 }
@@ -125,12 +129,16 @@ function test-abort {
 }
 
 function test-ok {
-	if [ ! -s "$@" ]; then echo "... $*" >&2; fi
+	if [ ! -s "$@" ]; then
+		echo "$(test-prefix)   ✓ $*" >&2
+	fi
 	TEST_LOG+=("✓${TEST_CURRENT}")
 }
 
 function test-fail {
-	if [ ! -z "$@" ]; then echo "!!! FAIL $*" >&2; fi
+	if [ ! -z "$@" ]; then
+		echo "!!! FAIL $*" >&2
+	fi
 	TEST_LOG+=("×")
 	TEST_ERRORS+=("F${TEST_CURRENT}")
 }
@@ -216,12 +224,16 @@ function test-path {
 	echo -n "$TEST_PATH"
 }
 
+function test-relpath {
+	realpath --relative-to="$PWD" "$1"
+}
+
 function test-exist {
 	for path in "$@"; do
 		if [ ! -e "$path" ]; then
 			test-fail "path does not exists: $path"
 		else
-			test-ok
+			test-ok "$(test-relpath "$path") exists"
 		fi
 	done
 }

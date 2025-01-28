@@ -340,16 +340,22 @@ function ls_pubkey_import { #KEYPATH
 		keyout_tmp=$(ls_mkstemp)
 		cp -a "$keypath" "${keyout_tmp}"
 		ls_log_output_start
-		ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2
-		openssl rsa -in "$keyout_tmp" -pubout
+		if ! ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2; then
+			res="$?"
+		else
+			openssl rsa -in "$keyout_tmp" -pubout
+			res="$?"
+		fi
 		ls_log_output_end
 		unlink "$keyout_tmp"
 		;;
 	private:pkcs8*)
-		openssl rsa -in "$keypath" -pubout /dev/stdout
+		openssl rsa -in "$keypath" -pubout
+		res="$?"
 		;;
 	public:ssh+rsa*)
 		ssh-keygen -f "$keypath" -e -m pem
+		res="$?"
 		;;
 	public:spki*)
 		cat "$keypath"
@@ -397,8 +403,11 @@ function ls_key_id_match { #TYPE FORMATS
 function ls_key_id {
 	# Function to analyze a single file
 	local file="${1:-}"
+	local tmp_file=""
 	if [ -z "$file" ]; then
-		file="$(cat /dev/stdin)"
+		tmp_file="$(ls_mkstemp)"
+		cat /dev/stdin >"$tmp_file"
+		file="$tmp_file"
 	fi
 	local result=""
 
@@ -447,6 +456,9 @@ function ls_key_id {
 		fi
 	else
 		echo ":"
+	fi
+	if [ -n "$tmp_file" ]; then
+		unlink "$tmp_file"
 	fi
 }
 
@@ -669,11 +681,15 @@ function ls_user_name {
 # key may be returned as a path, or as a data.
 function ls_user_pubkey { # USER? KEY?
 	if [ -n "${2:-}" ]; then
+		# If a KEY is given, the we try to get a pubkey from it
+		echo "$2" | sha256sum
 		ls_pubkey_import "${2:-$LITTLESECRETS_SSH_KEY}"
 	else
+		# If not KEY is given, we look for a user.
 		local user="${1:-$LITTLESECRETS_USER}"
 		local store="$(ls_store)"
 		if [ -n "$store" ]; then
+			# If there's a store and the userkey exist, we return it.
 			local keypath="$(ls_store)/user/$user.pubkey"
 			if [ -e "$keypath" ]; then
 				echo "$keypath"
@@ -715,46 +731,66 @@ function ls_secret_list {
 	ls_match_item "secret/*/secret.enc" "$@"
 }
 
-function ls_secret_write { # NAME PUBKEY?
+function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	local secret="$1"
 	local secret_path="$(ls_store)/secret/$secret/secret.enc"
-	# FIXME
-	local secret_key="$(ls_key)"
-
+	local secret_key="${3:-}"
+	if [ -z "$secret_key" ]; then
+		secret_key="$(ls_key)"
+	fi
 	# First step, we encrypt the secret with the secret key
 	ls_mkparent "$secret_path"
 	ls_encrypt_sym "$secret_key" </dev/stdin >"$secret_path"
 	# Second step, we encrypt the secret key with the user's public key
 	# TODO: Support PUBKEY
 	local user=$(ls_user_name)
-	local user_pubkey=$(ls_user_pubkey | ls_decode)
+	local user_pubkey=$(ls_user_pubkey "" "${2:-}" | ls_decode)
 	local secret_key_path="$(ls_store)/secret/$secret/$user.key"
 	ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
 	echo "$secret_path|$secret_key_path"
 }
 
-function ls_secret_add { # SECRET CONTENT PUBKEY?
+function ls_secret_add { # SECRET CONTENT PUBKEY? ENCKEY?
 	if [ -n "${2:-}" ]; then
-		echo -n "$2" | ls_secret_write "$1" "${3:-}"
+		echo -n "$2" | ls_secret_write "$1" "${3:-}" "${4:-}"
 	else
-		ls_secret_write "$1" </dev/stdin
+		ls_secret_write "$1" "${3:-}" "${4:-}" </dev/stdin
 	fi
 }
 
-function ls_secret_key { # SECRET
+function ls_secret_key_path { # SECRET USER?
+	local store="$(ls_store)"
+	local user=$(ls_user_name)
+	if [ -z "$store" ]; then return 1; fi
+	local secret_key_path="$store/secret/$1/$user.key"
+	if [ -e "$secret_key_path" ]; then
+		echo "$secret_key_path"
+	else
+		return 1
+	fi
+}
+
+function ls_secret_path { # SECRET
 	# We locate the secret
 	local secret="$1"
 	local store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 	local secret_path="$store/secret/$secret/secret.enc"
-	if [ ! -e "$secret_path" ]; then return 1; fi
+	if [ ! -e "$secret_path" ]; then
+		return 1
+	else
+		echo "$secret_path"
+	fi
+}
 
-	# First step, we decrypt the secret key with the user's private key
-	local user=$(ls_user_name)
-	local user_privkey=$(ls_user_privkey | ls_decode)
-	local secret_key_path="$store/secret/$secret/$user.key"
-	if [ ! -e "$secret_key_path" ]; then return 1; fi
-	ls_decrypt_asym "$user_privkey" <"$secret_key_path"
+function ls_secret_key { # SECRET PRIVKEY?
+	local user_privkey=$(ls_user_privkey "${2:-}" | ls_decode)
+	local secret_key_path="$(ls_secret_key_path "$1")"
+	if [ "$?" != 0 ]; then
+		return 1
+	else
+		ls_decrypt_asym "$user_privkey" <"$secret_key_path"
+	fi
 }
 
 function ls_secret_get { # NAME PRIVKEY?
