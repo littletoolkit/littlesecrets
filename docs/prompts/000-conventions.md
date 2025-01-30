@@ -3,7 +3,7 @@
 Naming conventions:
 - Globals are `UPPER_CASE`
 - Classes, Singletons, Structures, Types are `PascalCase`
-- When acronyms are `PascalCase`, like `Http`.
+- Acronyms are `UPPERCASE`, like `HTTP`.
 - Functions, methods and parameters are `camelCase`
 - Class methods should be `CamelCase`
 - Local variables are `snake_case`

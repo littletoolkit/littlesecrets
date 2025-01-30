@@ -15,23 +15,54 @@ Note that:
 - Users may have multiple SSH keys associated with their name, for instance, when using different computer.
 - Users may have on a given machine multiple SSH keypairs, using different formats, like RSA or ECDSA.
 
-The cryptography should be implemented as backends matching.
+In practice:
 
-For asymmetric crypto backends (AsmCrypto):
+- Secrets are symmetrically encrypted using a random key
+- Secret encryption key is asymmetrically encrypted using an RSA keypair
+- An RSA private key either in SSH or PEM (openssl) format
+- An RSA public key in PEM (openssl) format, optional as it can be derived from the private key
+- An secret encryption key no longer than what the RSA keypair can encrypt
 
-- `aenc(data, pubkey)` asymmetrically encrypts the given data with the given
-  public key, making sure that `data` does not exceeds the size that can be
-  encrypted by `pubkey`
+In shell, the symmetric encryption works like so:
 
-- `adec(aencdata, privkey)` decrypts the asymmetrically encrypted data using
-  the private key.
+```
+# Outputs an encryption key, no longer than what the RSA keypair can encrypt
+openssl rand 214 # 2048/8 - 42
 
-For symmetric crypto backends (SymCrypto):
+# Outputs the encrypted secret using the encryption key
+openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass "file:$SECRET_ENC_KEY_PATH"
 
-- `enc(data, key)` symmetrically encrypts the data with the given key
+# Outputs the decrypted secret using the encryption key
+openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass "file:$SECRET_ENC_KEY_PATH"
+```
 
-- `dec(encdata, key)` symmetrically decrypts the data with the given key
+In shell, the management of RSA keys works like so:
 
-Crypto backends should have a unique `name` that can be used to identify the
-format.
+```
+# Create an SSH/RSA private key
+ssh-keygen -q -t rsa -b 4096 -N "" -f "$PRIVATE_KEY_PATH"
 
+# Convert (in place) an SSH/RSA private key to OpenSSL/RSA private key
+ssh-keygen -q -p -m pem -N '' -f "$PRIVATE_KEY_PATH"
+
+# Outputs an SSH/RSA public key to OpenSSL/RSA public key
+ssh-keygen -e -m PKCS8 -f "$PUBLIC_KEY_PATH"
+
+# Create an OpenSSL/RSA private key
+openssl genrsa -out "$PRIVATE_KEY_PATH" 4096
+
+# Outputs an OpenSSL/RSA public key from an OpenSSL/RSA private key
+openssl rsa -in "$PRIVATE_KEY_PATH" -pubout
+```
+
+The asymmetric encryption works like so, where what is encrypted is the key
+used to symmetrically encrypt the secret.
+
+```
+# Outputs the encrypted secret using the given OpenSSL/RSA public key
+openssl pkeyutl -encrypt -pubin -inkey "$PUBLIC_KEY_PATH" -in "$SECRET_ENC_KEY_PATH" -out /dev/stdout
+
+# Outputs the decrypted secret using the given OpenSSL/RSA private key
+openssl pkeyutl -decrypt -inkey "$PRIVATE_KEY_PATH" -in "$SECRET_ENC_KEY_PATH" -out /dev/stdout
+
+```

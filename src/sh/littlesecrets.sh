@@ -25,7 +25,7 @@ LS_CLEANUP+=("")
 # --
 # And define the configuration
 LITTLESECRETS_USER=${LITTLESECRETS_USER:-$USER}
-LITTLESECRETS_SSH_KEY=${LITTLESECRETS_SSH_KEY:-$HOME/.ssh/id_rsa}
+LITTLESECRETS_KEY=${LITTLESECRETS_KEY:-$HOME/.ssh/id_rsa}
 LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
 LITTLESECRETS_KEYSIZE=2048
@@ -215,9 +215,9 @@ function ls_match_item {
 # -----------------------------------------------------------------------------
 
 # --
-# Ensures that the `LITTLESECRETS_SSH_KEY` exists and is in the right format.
+# Ensures that the `LITTLESECRETS_KEY` exists and is in the right format.
 function ls_ssh_keypair_ensure { # KEYPATH
-	local privkey_path="${1:-$LITTLESECRETS_SSH_KEY}"
+	local privkey_path="${1:-$LITTLESECRETS_KEY}"
 	local privkey_pem_path="${privkey_path}.pem"
 	local pubkey_pem_path="${privkey_path}.pem.pub"
 	# Ensures private key exists, otherwise creates it
@@ -231,7 +231,7 @@ function ls_ssh_keypair_ensure { # KEYPATH
 	ssh-keygen -y -P "" -f "$privkey_path" >/dev/null 2>&1
 	if [ ! $? -eq 0 ]; then
 		ls_log_error "SSH private key has a passphrase: $privkey_path"
-		ls_log_tip "Generate a new key and set 'LITTLESECRETS_SSH_KEY' to that key"
+		ls_log_tip "Generate a new key and set 'LITTLESECRETS_KEY' to that key"
 		return 1
 	fi
 	# Ensures PEM private key exists, and is up to date
@@ -354,7 +354,7 @@ function ls_pubkey_import { #KEYPATH
 		res="$?"
 		;;
 	public:ssh+rsa*)
-		ssh-keygen -f "$keypath" -e -m pem
+		ssh-keygen -f "$keypath" -e -m PKCS8
 		res="$?"
 		;;
 	public:spki*)
@@ -653,7 +653,7 @@ function ls_user_registered { # USER? KEY?
 function ls_user_register { # USER? KEY?
 	local store="$(ls_store_ensure)"
 	local user="${1:-$LITTLESECRETS_USER}"
-	local key="$(ls_pubkey_import "${2:-$LITTLESECRETS_SSH_KEY}")"
+	local key="$(ls_pubkey_import "${2:-$LITTLESECRETS_KEY}")"
 	local user_key_path="$store/user/$user.pubkey"
 	if [ -e "$user_key_path" ]; then
 		if [ ! cmd -s "$user_key_path" <(echo "$key") ]; then
@@ -683,7 +683,7 @@ function ls_user_pubkey { # USER? KEY?
 	if [ -n "${2:-}" ]; then
 		# If a KEY is given, the we try to get a pubkey from it
 		echo "$2" | sha256sum
-		ls_pubkey_import "${2:-$LITTLESECRETS_SSH_KEY}"
+		ls_pubkey_import "${2:-$LITTLESECRETS_KEY}"
 	else
 		# If not KEY is given, we look for a user.
 		local user="${1:-$LITTLESECRETS_USER}"
@@ -703,10 +703,10 @@ function ls_user_pubkey { # USER? KEY?
 
 # --
 # Returns the private key (as content) for the current user. This will
-# retrieve the private key from the `LITTLESECRETS_SSH_KEY`, or use the
+# retrieve the private key from the `LITTLESECRETS_KEY`, or use the
 # given `KEY` if provided.
 function ls_user_privkey { # KEY?
-	local keypath="${1:-$LITTLESECRETS_SSH_KEY}"
+	local keypath="${1:-$LITTLESECRETS_KEY}"
 	local keypath_fmt=$(ls_key_id "$keypath")
 	local keypath_pem="$keypath.pem"
 	local keypath_pem_fmt=$(ls_key_id "$keypath_pem")
