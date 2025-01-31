@@ -477,6 +477,13 @@ function ls_encoded {
 		return 1
 		;;
 	esac
+
+	# Restore original values
+	LITTLESECRETS_KEY="$orig_key"
+	LITTLESECRETS_USER="$orig_user" 
+	LITTLESECRETS_STORE="$orig_store"
+
+	return $ret
 }
 
 # --
@@ -884,9 +891,40 @@ function ls_user_deregister { # USER KEY?
 # -----------------------------------------------------------------------------
 
 function ls_cli {
+	# Parse global options first
+	local orig_key="$LITTLESECRETS_KEY"
+	local orig_user="$LITTLESECRETS_USER"
+	local orig_store="$LITTLESECRETS_STORE"
+	
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-k|--key)
+				LITTLESECRETS_KEY="$2"
+				shift 2
+				;;
+			-u|--user)
+				LITTLESECRETS_USER="$2"
+				shift 2
+				;;
+			-s|--store)
+				LITTLESECRETS_STORE="$2"
+				shift 2
+				;;
+			-*|--*)
+				ls_log_error "Unknown option $1"
+				return 1
+				;;
+			*)
+				break
+				;;
+		esac
+	done
+
 	local cmd="${1:-}"
 	shift || true
 
+	# Handle the command
+	local ret=0
 	case "$cmd" in
 	"init")
 		ls_store_init "${1:-.}"
