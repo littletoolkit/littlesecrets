@@ -10,7 +10,25 @@ littlesecrets - A shared secrets manager for teams using git repositories
 
 # DESCRIPTION
 
-LittleSecrets is a secure secrets management tool designed for teams to safely store and share secrets in a git repository. It uses SSH keys for authentication and encryption, allowing team members to securely access and share secrets.
+LittleSecrets is a secure secrets management tool designed for teams to safely store and share secrets. It provides:
+
+**Multi-Machine Password Store**
+: Works as a password manager across multiple machines, with per-device secret access control using device-specific SSH keys.
+
+**Team Secret Sharing**
+: Enables secure secret sharing amongst team members using their existing SSH keypairs - no need for new authentication systems.
+
+**Flexible Storage**
+: Secrets can be safely stored on any backend: local filesystem, Git repository, file archive, SQLite database, or cloud services like AWS Secrets Manager.
+
+**Strong Encryption**
+: Uses industry-standard cryptography:
+- Secrets are encrypted with AES-256-GCM using random keys
+- Each secret's encryption key is then encrypted with RSA-4096 (using each authorized user's public key)
+- Supports both OpenSSH and OpenSSL key formats
+- No shared passwords or master keys required
+
+The system is designed to be git-friendly, allowing teams to safely store encrypted secrets alongside their code while maintaining full audit history of access changes.
 
 # OPTIONS
 
