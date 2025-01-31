@@ -974,18 +974,28 @@ function ls_secret_grant { # SECRET USER_EXPR
 	done
 }
 
-function ls_secret_users { # SECRET
+function ls_secret_users { # SECRET?
 	local store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
-	local secret="$1"
-	if [ -z "$secret" ]; then return 1; fi
 	
-	# List all .key files in the secret directory and extract user@host from filenames
-	for keyfile in "$store/secret/$secret"/*.key; do
+	# If no secret specified, list for all secrets
+	if [ -z "${1:-}" ]; then
+		for secret in $(ls_secret_list); do
+			echo -n "$secret:"
+			ls_secret_users "$secret"
+			echo
+		done
+		return 0
+	fi
+	
+	# For a specific secret, list all users with access
+	local users=""
+	for keyfile in "$store/secret/$1"/*.key; do
 		if [ -e "$keyfile" ]; then
-			basename "$keyfile" .key
+			users="$users $(basename "$keyfile" .key)"
 		fi
 	done
+	echo "${users# }"
 }
 
 function ls_secret_revoke { # SECRET USER_EXPR
@@ -1181,13 +1191,17 @@ function ls_cli {
 	"users")
 		ls_user_list "$@"
 		;;
-	## access <secret>    List users with access to a secret
+	## access [expr...]   List users with access to secrets matching expr
 	"access")
 		if [ -z "${1:-}" ]; then
-			ls_log_error "access: Missing secret name"
-			return 1
+			ls_secret_users
+		else
+			for secret in $(ls_secret_list "$@"); do
+				echo -n "$secret:"
+				ls_secret_users "$secret"
+				echo
+			done
 		fi
-		ls_secret_users "$1"
 		;;
 	*)
 		if [ -n "$cmd" ]; then
