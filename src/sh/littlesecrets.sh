@@ -5,6 +5,8 @@
 # | | | |_| |_| |  __/\ \  __/ (__| | |  __/ |_\__ \
 # |_|_|\__|\__|_|\___\__/\___|\___|_|  \___|\__|___/
 
+# TODO: register, etc don't work well as pubkey is not imported properly
+
 # --
 # A simplified, reduced version of LittleSecrets that works only with
 # the shell and simple tools.
@@ -727,6 +729,11 @@ function ls_user_register { # USER? KEY?
 	local host="$(ls_user_host "${1:-}")"
 	local key="$(ls_pubkey_import "${2:-$LITTLESECRETS_KEY}")"
 	local user_key_path="$store/user/$user/$host.pubkey"
+	if [ -z "$key" ]; then
+		ls_log_error "Could not import user public key: $(ls_pubkey_path "${1:-}" "${2:-}")"
+		return 1
+	fi
+	echo "KEY: $key"
 	if [ -e "$user_key_path" ]; then
 		if [ ! cmd -s "$user_key_path" <(echo "$key") ]; then
 			# We're overriding a key
@@ -977,7 +984,7 @@ function ls_secret_grant { # SECRET USER_EXPR
 function ls_secret_users { # SECRET?
 	local store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
-	
+
 	# If no secret specified, list for all secrets
 	if [ -z "${1:-}" ]; then
 		for secret in $(ls_secret_list); do
@@ -987,7 +994,7 @@ function ls_secret_users { # SECRET?
 		done
 		return 0
 	fi
-	
+
 	# For a specific secret, list all users with access
 	local users=""
 	for keyfile in "$store/secret/$1"/*.key; do

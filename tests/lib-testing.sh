@@ -21,6 +21,10 @@ TEST_CURRENT_ERRORS=0
 # Test data is not public, so we restrict the umask.
 umask 0077
 
+function test-init {
+	test-start "$@"
+}
+
 # --
 # Starts the test, running the test in a new temporary
 # directory set to `TEST_PATH`
@@ -66,6 +70,10 @@ function test-expect {
 	else
 		test-ok "${3:-}"
 	fi
+}
+
+function test-case {
+	test-step "$@"
 }
 
 function test-step {
