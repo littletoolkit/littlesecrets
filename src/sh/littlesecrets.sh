@@ -891,6 +891,9 @@ function ls_user_deregister { # USER KEY?
 # -----------------------------------------------------------------------------
 
 function ls_cli {
+	# Define version
+	local VERSION="1.0.0"
+
 	# Parse global options first
 	local orig_key="$LITTLESECRETS_KEY"
 	local orig_user="$LITTLESECRETS_USER"
@@ -910,6 +913,14 @@ function ls_cli {
 				LITTLESECRETS_STORE="$2"
 				shift 2
 				;;
+			-h|--help)
+				ls_cli help
+				return 0
+				;;
+			-v|--version)
+				ls_cli version
+				return 0
+				;;
 			-*|--*)
 				ls_log_error "Unknown option $1"
 				return 1
@@ -925,16 +936,28 @@ function ls_cli {
 
 	# Handle the command
 	local ret=0
-	# Extract help from comments if requested
-	if [ "$cmd" = "--help" ] || [ "$cmd" = "-h" ] || [ -z "$cmd" ]; then
-		echo "Usage: littlesecrets <command> [args...]"
+
+	case "$cmd" in
+	## help              Show this help message
+	"help")
+		echo "Usage: littlesecrets [options] <command> [args...]"
+		echo ""
+		echo "Options:"
+		echo "  -h, --help        Show this help message"
+		echo "  -v, --version     Show version information"
+		echo "  -k, --key KEY     Set private key path"
+		echo "  -u, --user USER   Set user name"
+		echo "  -s, --store PATH  Set store path"
 		echo ""
 		echo "Commands:"
 		grep '^[[:space:]]*##' "$0" | sed 's/^[[:space:]]*## \?/  /g'
-		return 1
-	fi
-
-	case "$cmd" in
+		return 0
+		;;
+	## version           Show version information
+	"version")
+		echo "littlesecrets version $VERSION"
+		return 0
+		;;
 	## init [path]        Initialize a new secrets store
 	"init")
 		ls_store_init "${1:-.}"
