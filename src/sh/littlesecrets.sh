@@ -742,6 +742,27 @@ function ls_user_name { # USER?
 	echo "${user%@*}"
 }
 
+function ls_user_list_keys { # USER? HOST?
+	local store="$(ls_store)"
+	if [ -z "$store" ]; then return 1; fi
+	local user="$(ls_user_name "${1:-}")"
+	local host="${2:-}"
+	if [ -n "$host" ]; then
+		# If host is specified, only return that specific key
+		local keypath="$store/user/$user/$host.pubkey"
+		if [ -e "$keypath" ]; then
+			echo "$keypath"
+		fi
+	else
+		# Otherwise return all host keys for the user
+		for keypath in "$store/user/$user"/*.pubkey; do
+			if [ -e "$keypath" ]; then
+				echo "$keypath"
+			fi
+		done
+	fi
+}
+
 function ls_user_host { # USER?
 	local user="${1:-$LITTLESECRETS_USER}"
 	if [[ "$user" == *@* ]]; then
@@ -820,13 +841,23 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	# First step, we encrypt the secret with the secret key
 	ls_mkparent "$secret_path"
 	ls_encrypt_sym "$secret_key" </dev/stdin >"$secret_path"
-	# Second step, we encrypt the secret key with the user's public key
-	# TODO: Support PUBKEY
+	
+	# Second step, encrypt the secret key for each of the user's host keys
 	local user=$(ls_user_name)
-	local user_pubkey=$(ls_user_pubkey "" "${2:-}" | ls_decode)
-	local secret_key_path="$(ls_store)/secret/$secret/$user.key"
-	ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
-	echo "$secret_path|$secret_key_path"
+	if [ -n "${2:-}" ]; then
+		# If a specific pubkey is provided, use only that
+		local user_pubkey=$(echo "${2:-}" | ls_decode)
+		local secret_key_path="$(ls_store)/secret/$secret/$user.key"
+		ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
+	else
+		# Otherwise encrypt for all host keys
+		for pubkey_path in $(ls_user_list_keys "$user"); do
+			local host=$(basename "$pubkey_path" .pubkey)
+			local secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
+			ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
+		done
+	fi
+	echo "$secret_path"
 }
 
 function ls_secret_add { # SECRET CONTENT PUBKEY? ENCKEY?
@@ -881,8 +912,9 @@ function ls_secret_get { # NAME PRIVKEY?
 
 	# First step, we decrypt the secret key with the user's private key
 	local user=$(ls_user_name)
+	local host=$(ls_user_host)
 	local user_privkey=$(ls_user_privkey "${2:-}" | ls_decode)
-	local secret_key_path="$store/secret/$secret/$user.key"
+	local secret_key_path="$store/secret/$secret/$user@$host.key"
 	if [ ! -e "$secret_key_path" ]; then return 0; fi
 	local secret_key=$(ls_decrypt_asym "$user_privkey" <"$secret_key_path")
 
@@ -913,11 +945,24 @@ function ls_secret_grant { # SECRET USER_EXPR
 	local secret_key=$(ls_secret_key "$secret")
 	if [ "$?" != 0 ]; then return 1; fi
 
-	for user in $(ls_user_list "$@"); do
-		local user_pubkey=$(ls_user_pubkey "$user")
-		if [ -n "$user_pubkey" ]; then
-			local secret_key_path="$store/secret/$secret/$user.key"
-			ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
+	for user_expr in "$@"; do
+		local user=$(ls_user_name "$user_expr")
+		local host=$(ls_user_host "$user_expr")
+		
+		if [[ "$user_expr" == *@* ]]; then
+			# If user@host format, grant only to that specific host
+			local user_pubkey=$(ls_user_pubkey "$user_expr")
+			if [ -n "$user_pubkey" ]; then
+				local secret_key_path="$store/secret/$secret/$user@$host.key"
+				ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
+			fi
+		else
+			# Otherwise grant to all host keys for the user
+			for pubkey_path in $(ls_user_list_keys "$user"); do
+				local key_host=$(basename "$pubkey_path" .pubkey)
+				local secret_key_path="$store/secret/$secret/$user@$key_host.key"
+				ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
+			done
 		fi
 	done
 }
@@ -927,10 +972,19 @@ function ls_secret_revoke { # SECRET USER_EXPR
 	if [ -z "$store" ]; then return 1; fi
 	local secret="$1"
 	shift
-	for user in $(ls_user_list "$@"); do
-		local secret_key_path="$store/secret/$secret/$user.key"
-		if [ -e "$secret_key_path" ]; then
-			rm -f "$secret_key_path"
+	for user_expr in "$@"; do
+		local user=$(ls_user_name "$user_expr")
+		local host=$(ls_user_host "$user_expr")
+		
+		if [[ "$user_expr" == *@* ]]; then
+			# If user@host format, revoke only from that specific host
+			local secret_key_path="$store/secret/$secret/$user@$host.key"
+			if [ -e "$secret_key_path" ]; then
+				rm -f "$secret_key_path"
+			fi
+		else
+			# Otherwise revoke from all host keys for the user
+			rm -f "$store/secret/$secret/$user@*.key"
 		fi
 	done
 }
