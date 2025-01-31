@@ -1,5 +1,6 @@
 [tools]
 python = "3.10"
+pandoc = "latest"
 # "pipx:Aider-AI/aider" = "latest"
 
 [tasks.prep]
