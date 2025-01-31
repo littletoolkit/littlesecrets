@@ -821,18 +821,62 @@ function ls_secret_get { # NAME PRIVKEY?
 #
 # -----------------------------------------------------------------------------
 
-function ls_set {
-	local secret="$1"
-	local content="${1:-}"
+function ls_cli {
+    local cmd="${1:-}"
+    shift || true
+
+    case "$cmd" in
+        "init")
+            ls_store_init "${1:-.}"
+            ;;
+        "list"|"ls")
+            ls_secret_list "$@"
+            ;;
+        "get")
+            if [ -z "${1:-}" ]; then
+                ls_log_error "get: Missing secret name"
+                return 1
+            fi
+            ls_secret_get "$1" "${2:-}"
+            ;;
+        "set"|"add")
+            if [ -z "${1:-}" ]; then
+                ls_log_error "set: Missing secret name"
+                return 1
+            fi
+            if [ -n "${2:-}" ]; then
+                # Content provided as argument
+                ls_secret_add "$1" "$2" "${3:-}" "${4:-}"
+            else
+                # Read content from stdin
+                ls_secret_add "$1" "" "${2:-}" "${3:-}"
+            fi
+            ;;
+        "register")
+            ls_user_register "${1:-}" "${2:-}"
+            ;;
+        "users")
+            ls_user_list "$@"
+            ;;
+        *)
+            echo "Usage: littlesecrets <command> [args...]"
+            echo ""
+            echo "Commands:"
+            echo "  init [path]        Initialize a new secrets store"
+            echo "  list|ls            List available secrets"
+            echo "  get <name>         Get a secret's value"
+            echo "  set|add <name> [value] Set a secret's value"
+            echo "  register [user] [key] Register a user's public key"
+            echo "  users              List registered users"
+            return 1
+            ;;
+    esac
 }
 
-function ls_get {
-	local secret="$1"
-}
-
-function ls_list {
-	echo X
-}
+# Add this at the end to handle direct script execution
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    ls_cli "$@"
+fi
 
 # -----------------------------------------------------------------------------
 #
