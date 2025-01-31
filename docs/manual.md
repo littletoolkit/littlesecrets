@@ -44,6 +44,9 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **-u**, **--user** *USER*
 : Set user name (default: $USER)
 
+**--host** *HOST*
+: Set host name (default: $HOSTNAME)
+
 **-s**, **--store** *PATH*
 : Set store path (default: .littlesecrets)
 
@@ -70,11 +73,11 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **revoke** *SECRET* *EXPR*...
 : Revoke access from users matching the glob expressions
 
-**register** [*USER*] [*KEY*]
-: Register a user's public key
+**register** [*USER[@HOST]*] [*KEY*]
+: Register a user's public key for a specific host. If HOST is not specified, uses LITTLESECRETS_HOST.
 
-**deregister** *USER* [*KEY*]
-: De-register a user's public key
+**deregister** *USER[@HOST]*] [*KEY*]
+: De-register a user's public key from a specific host
 
 **users** [*EXPR*...]
 : List users matching the glob expressions
@@ -83,6 +86,9 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 
 **LITTLESECRETS_USER**
 : Name of the user (defaults to $USER)
+
+**LITTLESECRETS_HOST**
+: Name of the host (defaults to $HOSTNAME)
 
 **LITTLESECRETS_KEY**
 : Path to the user's SSH private key (defaults to $HOME/.ssh/id_rsa)
