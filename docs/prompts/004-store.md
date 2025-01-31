@@ -22,7 +22,7 @@ users/                         # Stores the users
 
 groups/                        # Keeps track of groups
   <name>/                      # Group Name
-    <user>                     # Member User Name
+    <user>/                    # Member User Name
 ```
 
 Note that it is important for the store to know when items were updated, as for
