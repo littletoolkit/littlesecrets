@@ -839,9 +839,9 @@ function ls_cli {
             fi
             ls_secret_get "$1" "${2:-}"
             ;;
-        "set"|"add")
+        "add"|"set")
             if [ -z "${1:-}" ]; then
-                ls_log_error "set: Missing secret name"
+                ls_log_error "add: Missing secret name"
                 return 1
             fi
             if [ -n "${2:-}" ]; then
@@ -852,8 +852,36 @@ function ls_cli {
                 ls_secret_add "$1" "" "${2:-}" "${3:-}"
             fi
             ;;
+        "remove")
+            if [ -z "${1:-}" ]; then
+                ls_log_error "remove: Missing secret name"
+                return 1
+            fi
+            ls_secret_remove "$1"
+            ;;
+        "grant")
+            if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
+                ls_log_error "grant: Missing secret name or user pattern"
+                return 1
+            fi
+            ls_secret_grant "$1" "$2"
+            ;;
+        "revoke") 
+            if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
+                ls_log_error "revoke: Missing secret name or user pattern"
+                return 1
+            fi
+            ls_secret_revoke "$1" "$2"
+            ;;
         "register")
             ls_user_register "${1:-}" "${2:-}"
+            ;;
+        "deregister")
+            if [ -z "${1:-}" ]; then
+                ls_log_error "deregister: Missing user"
+                return 1
+            fi
+            ls_user_deregister "$1" "${2:-}"
             ;;
         "users")
             ls_user_list "$@"
@@ -863,11 +891,15 @@ function ls_cli {
             echo ""
             echo "Commands:"
             echo "  init [path]        Initialize a new secrets store"
-            echo "  list|ls            List available secrets"
+            echo "  list|ls [expr...]  List secrets matching expr"
             echo "  get <name>         Get a secret's value"
-            echo "  set|add <name> [value] Set a secret's value"
+            echo "  add|set <name> [value] Set a secret's value"
+            echo "  remove <name>      Remove a secret"
+            echo "  grant <name> <expr...> Grant access to users matching expr"
+            echo "  revoke <name> <expr...> Revoke access from users matching expr"
             echo "  register [user] [key] Register a user's public key"
-            echo "  users              List registered users"
+            echo "  deregister <user> [key] De-register a user's public key" 
+            echo "  users [expr...]    List users matching expr"
             return 1
             ;;
     esac
@@ -888,3 +920,64 @@ trap ls_cleanup EXIT INT TERM
 trap ls_on_error ERR
 
 # EOF
+function ls_secret_remove { # SECRET
+    local store="$(ls_store)"
+    if [ -z "$store" ]; then return 1; fi
+    local secret_path="$store/secret/$1"
+    if [ -e "$secret_path" ]; then
+        rm -rf "$secret_path"
+        return 0
+    fi
+    return 1
+}
+
+function ls_secret_grant { # SECRET USER_EXPR
+    local store="$(ls_store)"
+    if [ -z "$store" ]; then return 1; fi
+    local secret="$1"
+    shift
+    local secret_key=$(ls_secret_key "$secret")
+    if [ "$?" != 0 ]; then return 1; fi
+    
+    for user in $(ls_user_list "$@"); do
+        local user_pubkey=$(ls_user_pubkey "$user")
+        if [ -n "$user_pubkey" ]; then
+            local secret_key_path="$store/secret/$secret/$user.key"
+            ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
+        fi
+    done
+}
+
+function ls_secret_revoke { # SECRET USER_EXPR
+    local store="$(ls_store)"
+    if [ -z "$store" ]; then return 1; fi
+    local secret="$1"
+    shift
+    for user in $(ls_user_list "$@"); do
+        local secret_key_path="$store/secret/$secret/$user.key"
+        if [ -e "$secret_key_path" ]; then
+            rm -f "$secret_key_path"
+        fi
+    done
+}
+
+function ls_user_deregister { # USER KEY?
+    local store="$(ls_store)"
+    if [ -z "$store" ]; then return 1; fi
+    local user="$1"
+    local key="${2:-}"
+    if [ -n "$key" ]; then
+        # Only remove if key matches
+        local current=$(ls_user_pubkey "$user")
+        local given=$(ls_pubkey_import "$key")
+        if [ "$current" = "$given" ]; then
+            rm -f "$store/user/$user.pubkey"
+            return 0
+        fi
+        return 1
+    else
+        # Remove all keys
+        rm -f "$store/user/$user.pubkey"
+        return 0
+    fi
+}
