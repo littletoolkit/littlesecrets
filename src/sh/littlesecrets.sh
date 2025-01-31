@@ -925,13 +925,25 @@ function ls_cli {
 
 	# Handle the command
 	local ret=0
+	# Extract help from comments if requested
+	if [ "$cmd" = "--help" ] || [ "$cmd" = "-h" ] || [ -z "$cmd" ]; then
+		echo "Usage: littlesecrets <command> [args...]"
+		echo ""
+		echo "Commands:"
+		grep '^[[:space:]]*##' "$0" | sed 's/^[[:space:]]*## \?/  /g'
+		return 1
+	fi
+
 	case "$cmd" in
+	## init [path]        Initialize a new secrets store
 	"init")
 		ls_store_init "${1:-.}"
 		;;
+	## list|ls [expr...]  List secrets matching expr
 	"list" | "ls")
 		ls_secret_list "$@"
 		;;
+	## get <name>         Get a secret's value
 	"get")
 		if [ -z "${1:-}" ]; then
 			ls_log_error "get: Missing secret name"
@@ -939,6 +951,7 @@ function ls_cli {
 		fi
 		ls_secret_get "$1" "${2:-}"
 		;;
+	## add|set <name> [value] Set a secret's value
 	"add" | "set")
 		if [ -z "${1:-}" ]; then
 			ls_log_error "add: Missing secret name"
@@ -952,6 +965,7 @@ function ls_cli {
 			ls_secret_add "$1" "" "${2:-}" "${3:-}"
 		fi
 		;;
+	## remove <name>      Remove a secret
 	"remove")
 		if [ -z "${1:-}" ]; then
 			ls_log_error "remove: Missing secret name"
@@ -959,6 +973,7 @@ function ls_cli {
 		fi
 		ls_secret_remove "$1"
 		;;
+	## grant <name> <expr...> Grant access to users matching expr
 	"grant")
 		if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
 			ls_log_error "grant: Missing secret name or user pattern"
@@ -966,6 +981,7 @@ function ls_cli {
 		fi
 		ls_secret_grant "$1" "$2"
 		;;
+	## revoke <name> <expr...> Revoke access from users matching expr
 	"revoke")
 		if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
 			ls_log_error "revoke: Missing secret name or user pattern"
@@ -973,9 +989,11 @@ function ls_cli {
 		fi
 		ls_secret_revoke "$1" "$2"
 		;;
+	## register [user] [key] Register a user's public key
 	"register")
 		ls_user_register "${1:-}" "${2:-}"
 		;;
+	## deregister <user> [key] De-register a user's public key
 	"deregister")
 		if [ -z "${1:-}" ]; then
 			ls_log_error "deregister: Missing user"
@@ -983,23 +1001,13 @@ function ls_cli {
 		fi
 		ls_user_deregister "$1" "${2:-}"
 		;;
+	## users [expr...]    List users matching expr
 	"users")
 		ls_user_list "$@"
 		;;
 	*)
-		echo "Usage: littlesecrets <command> [args...]"
-		echo ""
-		echo "Commands:"
-		echo "  init [path]        Initialize a new secrets store"
-		echo "  list|ls [expr...]  List secrets matching expr"
-		echo "  get <name>         Get a secret's value"
-		echo "  add|set <name> [value] Set a secret's value"
-		echo "  remove <name>      Remove a secret"
-		echo "  grant <name> <expr...> Grant access to users matching expr"
-		echo "  revoke <name> <expr...> Revoke access from users matching expr"
-		echo "  register [user] [key] Register a user's public key"
-		echo "  deregister <user> [key] De-register a user's public key"
-		echo "  users [expr...]    List users matching expr"
+		ls_log_error "Unknown command: $cmd"
+		ls_cli --help
 		return 1
 		;;
 	esac
