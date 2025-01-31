@@ -1,0 +1,126 @@
+% LITTLESECRETS(1) Version 1.0.0 | LittleSecrets Documentation
+
+# NAME
+
+littlesecrets - A shared secrets manager for teams using git repositories
+
+# SYNOPSIS
+
+**littlesecrets** [*OPTIONS*] *COMMAND* [*ARGS*...]
+
+# DESCRIPTION
+
+LittleSecrets is a secure secrets management tool designed for teams to safely store and share secrets in a git repository. It uses SSH keys for authentication and encryption, allowing team members to securely access and share secrets.
+
+# OPTIONS
+
+**-h**, **--help**
+: Show help message and exit
+
+**-v**, **--version**
+: Show version information
+
+**-k**, **--key** *KEY*
+: Set private key path (default: $HOME/.ssh/id_rsa)
+
+**-u**, **--user** *USER*
+: Set user name (default: $USER)
+
+**-s**, **--store** *PATH*
+: Set store path (default: .littlesecrets)
+
+# COMMANDS
+
+**init** [*path*]
+: Initialize a new secrets store at the specified path (default: current directory)
+
+**list**, **ls** [*EXPR*...]
+: List secrets matching the given glob expressions
+
+**get** *SECRET*
+: Retrieve the value of a secret
+
+**add**, **set** *SECRET* [*CONTENT*]
+: Set a secret's value. If content is not provided, reads from stdin
+
+**remove** *SECRET*
+: Remove a secret
+
+**grant** *SECRET* *EXPR*...
+: Grant access to users matching the glob expressions
+
+**revoke** *SECRET* *EXPR*...
+: Revoke access from users matching the glob expressions
+
+**register** [*USER*] [*KEY*]
+: Register a user's public key
+
+**deregister** *USER* [*KEY*]
+: De-register a user's public key
+
+**users** [*EXPR*...]
+: List users matching the glob expressions
+
+# ENVIRONMENT
+
+**LITTLESECRETS_USER**
+: Name of the user (defaults to $USER)
+
+**LITTLESECRETS_KEY**
+: Path to the user's SSH private key (defaults to $HOME/.ssh/id_rsa)
+
+**LITTLESECRETS_STORE**
+: Path to the secrets store (defaults to .littlesecrets)
+
+# FILES
+
+*.littlesecrets/*
+: Default location of the secrets store
+
+*.littlesecrets/secrets/*
+: Directory containing encrypted secrets
+
+*.littlesecrets/users/*
+: Directory containing user public keys
+
+# EXAMPLES
+
+Initialize a new store:
+```
+littlesecrets init
+```
+
+Register a user:
+```
+littlesecrets register alice ~/.ssh/id_rsa.pub
+```
+
+Add a secret:
+```
+echo "mysecret123" | littlesecrets add db.password
+```
+
+Grant access to a team:
+```
+littlesecrets grant db.password "dev-*"
+```
+
+# EXIT STATUS
+
+**0**
+: Success
+
+**1**
+: Various errors (invalid arguments, encryption failure, etc.)
+
+# BUGS
+
+Report bugs at: https://github.com/yourusername/littlesecrets/issues
+
+# COPYRIGHT
+
+Copyright © 2025 Your Name. License MIT.
+
+# SEE ALSO
+
+**ssh-keygen**(1), **openssl**(1)
