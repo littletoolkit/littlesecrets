@@ -239,13 +239,18 @@ function ls_cleanup {
 function ls_match { # TEXT EXPR…
 	local text="$1"
 	shift # Remove first argument, leaving only the patterns
-	for pattern in "$@"; do
-		if [[ "$text" == $pattern ]]; then
-			echo "$text"
-			return 0
-		fi
-	done
-	return 1
+	if [ "$#" == 0 ]; then
+		echo "$text"
+		return 0
+	else
+		for pattern in "$@"; do
+			if [[ "$text" == $pattern ]]; then
+				echo "$text"
+				return 0
+			fi
+		done
+		return 1
+	fi
 }
 
 function ls_match_item {
@@ -260,6 +265,8 @@ function ls_match_item {
 				echo "$item"
 			fi
 		done
+	else
+		return 1
 	fi
 }
 
@@ -695,7 +702,7 @@ function ls_store_ensure {
 # --
 # Lists all the users in the store
 function ls_user_list { # EXPR…
-	ls_match_item "user/*.pubkey" "$@"
+	ls_match_item "user/*/*.pubkey" "$@"
 }
 
 function ls_user_registered { # USER? KEY?
@@ -841,7 +848,7 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	# First step, we encrypt the secret with the secret key
 	ls_mkparent "$secret_path"
 	ls_encrypt_sym "$secret_key" </dev/stdin >"$secret_path"
-	
+
 	# Second step, encrypt the secret key for each of the user's host keys
 	local user=$(ls_user_name)
 	if [ -n "${2:-}" ]; then
@@ -948,7 +955,7 @@ function ls_secret_grant { # SECRET USER_EXPR
 	for user_expr in "$@"; do
 		local user=$(ls_user_name "$user_expr")
 		local host=$(ls_user_host "$user_expr")
-		
+
 		if [[ "$user_expr" == *@* ]]; then
 			# If user@host format, grant only to that specific host
 			local user_pubkey=$(ls_user_pubkey "$user_expr")
@@ -975,7 +982,7 @@ function ls_secret_revoke { # SECRET USER_EXPR
 	for user_expr in "$@"; do
 		local user=$(ls_user_name "$user_expr")
 		local host=$(ls_user_host "$user_expr")
-		
+
 		if [[ "$user_expr" == *@* ]]; then
 			# If user@host format, revoke only from that specific host
 			local secret_key_path="$store/secret/$secret/$user@$host.key"
