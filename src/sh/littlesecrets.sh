@@ -18,6 +18,7 @@ LS_CLEANUP+=("")
 # --
 # And define the configuration
 LITTLESECRETS_USER=${LITTLESECRETS_USER:-$USER}
+LITTLESECRETS_HOST=${LITTLESECRETS_HOST:-$HOSTNAME}
 LITTLESECRETS_KEY=${LITTLESECRETS_KEY:-$HOME/.ssh/id_rsa}
 LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
@@ -700,7 +701,9 @@ function ls_user_list { # EXPR…
 function ls_user_registered { # USER? KEY?
 	local store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
-	local keypath="$store/user/${1:-$LITTLESECRETS_USER}.pubkey"
+	local user="$(ls_user_name "${1:-}")"
+	local host="$(ls_user_host "${1:-}")"
+	local keypath="$store/user/$user/$host.pubkey"
 	if [ -e "$keypath" ]; then
 		echo "$keypath"
 		return 0
@@ -713,9 +716,10 @@ function ls_user_registered { # USER? KEY?
 # Registers user with the given $(KEY)
 function ls_user_register { # USER? KEY?
 	local store="$(ls_store_ensure)"
-	local user="${1:-$LITTLESECRETS_USER}"
+	local user="$(ls_user_name "${1:-}")"
+	local host="$(ls_user_host "${1:-}")"
 	local key="$(ls_pubkey_import "${2:-$LITTLESECRETS_KEY}")"
-	local user_key_path="$store/user/$user.pubkey"
+	local user_key_path="$store/user/$user/$host.pubkey"
 	if [ -e "$user_key_path" ]; then
 		if [ ! cmd -s "$user_key_path" <(echo "$key") ]; then
 			# We're overriding a key
@@ -732,8 +736,21 @@ function ls_user_register { # USER? KEY?
 	return 0
 }
 
-function ls_user_name {
-	echo "$LITTLESECRETS_USER"
+function ls_user_name { # USER?
+	local user="${1:-$LITTLESECRETS_USER}"
+	# Extract username if in user@host format
+	echo "${user%@*}"
+}
+
+function ls_user_host { # USER?
+	local user="${1:-$LITTLESECRETS_USER}"
+	if [[ "$user" == *@* ]]; then
+		# Extract hostname from user@host
+		echo "${user#*@}"
+	else
+		# Use default host
+		echo "$LITTLESECRETS_HOST"
+	fi
 }
 
 # --
@@ -747,11 +764,12 @@ function ls_user_pubkey { # USER? KEY?
 		ls_pubkey_import "${2:-$LITTLESECRETS_KEY}"
 	else
 		# If not KEY is given, we look for a user.
-		local user="${1:-$LITTLESECRETS_USER}"
+		local user="$(ls_user_name "${1:-}")"
+		local host="$(ls_user_host "${1:-}")"
 		local store="$(ls_store)"
 		if [ -n "$store" ]; then
 			# If there's a store and the userkey exist, we return it.
-			local keypath="$(ls_store)/user/$user.pubkey"
+			local keypath="$(ls_store)/user/$user/$host.pubkey"
 			if [ -e "$keypath" ]; then
 				echo "$keypath"
 				return 0
@@ -951,6 +969,7 @@ function ls_cli {
 	# Parse global options first
 	local orig_key="$LITTLESECRETS_KEY"
 	local orig_user="$LITTLESECRETS_USER"
+	local orig_host="$LITTLESECRETS_HOST"
 	local orig_store="$LITTLESECRETS_STORE"
 
 	while [[ $# -gt 0 ]]; do
@@ -961,6 +980,10 @@ function ls_cli {
 			;;
 		-u | --user)
 			LITTLESECRETS_USER="$2"
+			shift 2
+			;;
+		--host)
+			LITTLESECRETS_HOST="$2"
 			shift 2
 			;;
 		-s | --store)
@@ -1001,6 +1024,7 @@ function ls_cli {
 		echo "  -v, --version     Show version information"
 		echo "  -k, --key KEY     Set private key path"
 		echo "  -u, --user USER   Set user name"
+		echo "  --host HOST       Set host name (default: \$HOSTNAME)"
 		echo "  -s, --store PATH  Set store path"
 		echo ""
 		echo "Commands:"
