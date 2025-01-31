@@ -10,13 +10,6 @@
 # the shell and simple tools.
 
 set -euo pipefail
-
-# --
-# We load the library expected to be in `LITTLESECRETS_PATH`
-LITTLESECRETS_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-source "$LITTLESECRETS_PATH"/littlesecrets/lib.sh
-ls_lib_load colors
-
 # --
 # We define the main internal variables
 declare -a LS_CLEANUP=()
@@ -29,6 +22,67 @@ LITTLESECRETS_KEY=${LITTLESECRETS_KEY:-$HOME/.ssh/id_rsa}
 LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
 LITTLESECRETS_KEYSIZE=2048
+
+# -----------------------------------------------------------------------------
+#
+# COLORS
+#
+# -----------------------------------------------------------------------------
+
+# --
+# Color library
+if [ -z "${NOCOLOR:-}" ]; then
+	CYAN="$(tput setaf 33)"
+	BLUE_DK="$(tput setaf 27)"
+	BLUE="$(tput setaf 33)"
+	BLUE_LT="$(tput setaf 117)"
+	GREEN="$(tput setaf 34)"
+	YELLOW="$(tput setaf 220)"
+	GRAY="$(tput setaf 153)"
+	GOLD="$(tput setaf 214)"
+	GOLD_DK="$(tput setaf 208)"
+	PURPLE_DK="$(tput setaf 55)"
+	PURPLE="$(tput setaf 92)"
+	PURPLE_LT="$(tput setaf 163)"
+	RED="$(tput setaf 124)"
+	ORANGE="$(tput setaf 202)"
+	BOLD="$(tput bold)"
+	REVERSE="$(tput rev)"
+	RESET="$(tput sgr0)"
+elif tput setaf 1 &>/dev/null; then
+	CYAN=""
+	BLUE_DK=""
+	BLUE=""
+	BLUE_LT=""
+	GREEN=""
+	YELLOW=""
+	GOLD=""
+	GOLD_DK=""
+	PURPLE_DK=""
+	PURPLE=""
+	PURPLE_LT=""
+	RED=""
+	ORANGE=""
+	BOLD=""
+	REVERSE=""
+	RESET=""
+fi
+export CYAN BLUE_DK
+export BLUE
+export BLUE_LT
+export GREEN
+export GRAY
+export YELLOW
+export GOLD
+export GOLD_DK
+export PURPLE_DK
+export PURPLE
+export PURPLE_LT
+export RED
+export ORANGE
+export BOLD
+export REVERSE
+export RESET
 
 # -----------------------------------------------------------------------------
 #
@@ -480,7 +534,7 @@ function ls_encoded {
 
 	# Restore original values
 	LITTLESECRETS_KEY="$orig_key"
-	LITTLESECRETS_USER="$orig_user" 
+	LITTLESECRETS_USER="$orig_user"
 	LITTLESECRETS_STORE="$orig_store"
 
 	return $ret
@@ -898,36 +952,36 @@ function ls_cli {
 	local orig_key="$LITTLESECRETS_KEY"
 	local orig_user="$LITTLESECRETS_USER"
 	local orig_store="$LITTLESECRETS_STORE"
-	
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-			-k|--key)
-				LITTLESECRETS_KEY="$2"
-				shift 2
-				;;
-			-u|--user)
-				LITTLESECRETS_USER="$2"
-				shift 2
-				;;
-			-s|--store)
-				LITTLESECRETS_STORE="$2"
-				shift 2
-				;;
-			-h|--help)
-				ls_cli help
-				return 0
-				;;
-			-v|--version)
-				ls_cli version
-				return 0
-				;;
-			-*|--*)
-				ls_log_error "Unknown option $1"
-				return 1
-				;;
-			*)
-				break
-				;;
+		-k | --key)
+			LITTLESECRETS_KEY="$2"
+			shift 2
+			;;
+		-u | --user)
+			LITTLESECRETS_USER="$2"
+			shift 2
+			;;
+		-s | --store)
+			LITTLESECRETS_STORE="$2"
+			shift 2
+			;;
+		-h | --help)
+			ls_cli help
+			return 0
+			;;
+		-v | --version)
+			ls_cli version
+			return 0
+			;;
+		-* | --*)
+			ls_log_error "Unknown option $1"
+			return 1
+			;;
+		*)
+			break
+			;;
 		esac
 	done
 
@@ -939,7 +993,7 @@ function ls_cli {
 
 	case "$cmd" in
 	## help              Show this help message
-	"help")
+	"help" | h)
 		echo "Usage: littlesecrets [options] <command> [args...]"
 		echo ""
 		echo "Options:"
@@ -954,7 +1008,7 @@ function ls_cli {
 		return 0
 		;;
 	## version           Show version information
-	"version")
+	"version" | v)
 		echo "littlesecrets version $VERSION"
 		return 0
 		;;
@@ -1029,17 +1083,14 @@ function ls_cli {
 		ls_user_list "$@"
 		;;
 	*)
-		ls_log_error "Unknown command: $cmd"
+		if [ -n "$cmd" ]; then
+			ls_log_error "Unknown command: '$cmd'"
+		fi
 		ls_cli --help
 		return 1
 		;;
 	esac
 }
-
-# Add this at the end to handle direct script execution
-if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
-	ls_cli "$@"
-fi
 
 # -----------------------------------------------------------------------------
 #
@@ -1048,6 +1099,12 @@ fi
 # -----------------------------------------------------------------------------
 
 trap ls_cleanup EXIT INT TERM
-trap ls_on_error ERR
+
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+	ls_cli "$@"
+else
+	# We only register error handling in library mode
+	trap ls_on_error ERR
+fi
 
 # EOF

@@ -1,42 +1,41 @@
-# Default target
 .PHONY: all
 all: test-keys test docs
 
-# Documentation directories
-DOCS_DIR = dist/docs
-MAN_DIR = dist/share/man/man1
-
-# Run all tests
 .PHONY: test
 test:
 	bun test ./tests/*.js
 
-# Generate test keys
-.PHONY: test-keys
-test-keys:
-	mkdir -p tests/data
-	bun tests/data/generate-test-keys.js
+define sh-install
+	PREFIX="$(if $(HOME),$(HOME)/.local,/usr/local)"
+	mkdir -p "$$PREFIX/bin"
+	$1 src/sh/littlesecrets.sh "$$PREFIX/bin/littlesecrets"
+	echo "-> Installed $2 $$PREFIX/bin/littlesecrets"
+	mkdir -p "$$PREFIX/share/man1"
+	$1 dist/docs/littlesecrets.1 "$$PREFIX/share/man/man1/littlesecrets.1"
+	echo "-> Installed $2 $$PREFIX/share/man/man1/littlesecrets.1"
+endef
 
-# Generate documentation
+.PHONY: install-link
+install-link: dist/docs/littlesecrets.1
+	@$(call sh-install,ln -sfr,(link))
+
+.PHONY: install
+install: dist/docs/littlesecrets.1
+	@$(call sh-install,cp -a,(copy))
+
 .PHONY: docs
-docs: html man
+docs: dist/docs/manual.html docs/littlesecrets.1
+	@
 
-.PHONY: html
-html: $(DOCS_DIR)
-	mkdir -p $(DOCS_DIR)
+dist/docs/manual.html: docs/manual.md
+	@mkdir -p $(DOCS_DIR)
 	cp docs/style.css $(DOCS_DIR)/
 	pandoc docs/manual.md -s --toc -c style.css -o $(DOCS_DIR)/manual.html
 
-.PHONY: man
-man: $(MAN_DIR)
-	mkdir -p $(MAN_DIR)
-	pandoc docs/manual.md -s -t man -o $(MAN_DIR)/littlesecrets.1
-
-# Clean generated test files and documentation
-.PHONY: clean
-clean:
-	rm -f tests/data/keypair.*.pub tests/data/keypair.*.priv
-	rm -rf dist
+dist/docs/littlesecrets.1:
+	@mkdir -p "$(dir $@)"
+	pandoc docs/manual.md -s -t man -o "$@"
 
 .ONESHELL:
+
 # EOF

@@ -2,7 +2,7 @@
 
 # NAME
 
-littlesecrets - A shared secrets manager for teams using git repositories
+littlesecrets - A shared secrets manager for individual and teams
 
 # SYNOPSIS
 
@@ -10,7 +10,7 @@ littlesecrets - A shared secrets manager for teams using git repositories
 
 # DESCRIPTION
 
-LittleSecrets is a secure secrets management tool designed for teams to safely store and share secrets. It provides:
+LittleSecrets is a secure secrets management tool designed for individual and teams to safely store and share secrets. It provides:
 
 **Multi-Machine Password Store**
 : Works as a password manager across multiple machines, with per-device secret access control using device-specific SSH keys.
@@ -137,7 +137,7 @@ Report bugs at: https://github.com/yourusername/littlesecrets/issues
 
 # COPYRIGHT
 
-Copyright © 2025 Your Name. License MIT.
+Copyright © 2025 LittleWorkshop LLC. License MIT.
 
 # SEE ALSO
 
