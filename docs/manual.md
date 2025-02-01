@@ -82,6 +82,9 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **users** [*EXPR*...]
 : List users matching the glob expressions
 
+**access** [*EXPR*...]
+: List users with access to secrets. If EXPR is provided, only show secrets matching the expressions. Format is "secret:user1@host1 user2@host2 ..."
+
 # ENVIRONMENT
 
 **LITTLESECRETS_USER**
