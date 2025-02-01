@@ -5,7 +5,8 @@
 # | | | |_| |_| |  __/\ \  __/ (__| | |  __/ |_\__ \
 # |_|_|\__|\__|_|\___\__/\___|\___|_|  \___|\__|___/
 
-# TODO: register, etc don't work well as pubkey is not imported properly
+# TODO: Support using age as a backend
+# TODO: We should never check if the key a path by using -f, this will leak the key to the OS
 
 # --
 # A simplified, reduced version of LittleSecrets that works only with
@@ -24,7 +25,7 @@ LITTLESECRETS_HOST=${LITTLESECRETS_HOST:-$HOSTNAME}
 LITTLESECRETS_KEY=${LITTLESECRETS_KEY:-$HOME/.ssh/id_rsa}
 LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
-LITTLESECRETS_KEYSIZE=2048
+LITTLESECRETS_KEYSIZE=2048 # NOTE: It would be best to do 4096, and we should test keys
 
 # -----------------------------------------------------------------------------
 #
@@ -241,6 +242,15 @@ function ls_cleanup {
 	done
 }
 
+function ls_ispath { ## PATHLIKE
+	if [[ "${1:-}" =~ / ]]; then
+		return 0
+	else
+		# FIXME: This should return 1 and work for paths with no /
+		return 0
+	fi
+}
+
 # --
 # Echoes `TEXT` if any `EXPR` (glob) matches `TEXT`
 function ls_match { # TEXT EXPR…
@@ -352,7 +362,7 @@ function ls_privkey_import { # KEYPATH
 	local keyfmt=
 	local keypath_tmp=
 	local keyout_tmp=
-	if [ -e "$1" ]; then
+	if ls_ispath "$1" && [ -e "$1" ]; then
 		keyfmt="$(ls_key_id "$keypath")"
 	else
 		keypath_tmp="$(ls_mkstemp)"
@@ -394,7 +404,7 @@ function ls_pubkey_import { #KEYPATH
 	local keyfmt=
 	local keypath_tmp=
 	local keyout_tmp=
-	if [ -e "$1" ]; then
+	if ls_ispath "$1" && [ -e "$1" ]; then
 		keyfmt="$(ls_key_id "$keypath")"
 	else
 		keypath_tmp="$(ls_mkstemp)"
@@ -867,14 +877,19 @@ function ls_user_privkey { # KEY?
 	local keypath_fmt=$(ls_key_id "$keypath")
 	local keypath_pem="$keypath.pem"
 	local keypath_pem_fmt=$(ls_key_id "$keypath_pem")
-	if [[ "$keypath_fmt" == private:pkcs8* ]]; then
+	if [[ "$keypath_fmt" == private:*pkcs8* ]]; then
 		# The given keypath is already in the right format
 		echo "$keypath"
-	elif [[ "$keypath_pem_fmt" == private:pkcs8* ]]; then
+	elif [[ "$keypath_pem_fmt" == private:*pkcs8* ]]; then
 		# TODO: We should issue a warning if the PEM file is older than than the key
 		# The alternate keypath is in the right formt
 		echo "$keypath_pem"
 	else
+		if [ -e "$keypath" ]; then
+			ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format at $keypath"
+		else
+			ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format"
+		fi
 		ls_privkey_import "$keypath"
 	fi
 }
@@ -900,28 +915,41 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 		secret_key="$(ls_key)"
 	fi
 	# First step, we encrypt the secret with the secret key
+	ls_log_action "ls_secret_write: Writing encrypted secret to $secret_path"
 	ls_mkparent "$secret_path"
 	ls_encrypt_sym "$secret_key" </dev/stdin >"$secret_path"
 
 	# Second step, encrypt the secret key for each of the user's host keys
-	local user=$(ls_user_name)
+	local user=$(ls_user_name "" "${2:-}")
 	if [ -n "${2:-}" ]; then
 		# If a specific pubkey is provided, use only that
 		local user_pubkey=$(echo "${2:-}" | ls_decode)
-		local secret_key_path="$(ls_store)/secret/$secret/$user.key"
+		local host=$(ls_user_host "" "$2")
+		local secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
+		ls_log_action "ls_secret_write: Encrypting secret key to $secret_key_path"
 		ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
 	else
+		local user_keys=$(ls_user_list_keys "$user")
+		if [ -z "$user_keys" ]; then
+			ls_user_register
+			user_keys=$(ls_user_list_keys "$user")
+		fi
+		if [ -z "$user_keys" ]; then
+			ls_error "ls_secret_write: No user key found for $user"
+			return 1
+		fi
 		# Otherwise encrypt for all host keys
-		for pubkey_path in $(ls_user_list_keys "$user"); do
+		for pubkey_path in $user_keys; do
 			local host=$(basename "$pubkey_path" .pubkey)
 			local secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
+			ls_log_action "ls_secret_write: Encrypting secret key to $secret_key_path"
 			ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
 		done
 	fi
 	echo "$secret_path"
 }
 
-function ls_secret_add { # SECRET CONTENT PUBKEY? ENCKEY?
+function ls_secret_add { # NAME VALUE PUBKEY? ENCKEY?
 	if [ -n "${2:-}" ]; then
 		echo -n "$2" | ls_secret_write "$1" "${3:-}" "${4:-}"
 	else
@@ -964,7 +992,6 @@ function ls_secret_key { # SECRET PRIVKEY?
 		ls_log_error "ls_secret_key: Could not retrieve path for secret key $1"
 		return 1
 	else
-		ls_log_message "KEY PATH $secret_key_path"
 		ls_decrypt_asym "$user_privkey" <"$secret_key_path"
 	fi
 }
@@ -1025,7 +1052,6 @@ function ls_secret_grant { # SECRET USER_EXPR
 		else
 			# Otherwise grant to all host keys for the user
 			for pubkey_path in $(ls_user_list_keys "$user"); do
-				echo "USER KEY $pubkey_path"
 				local key_host=$(basename "$pubkey_path" .pubkey)
 				local secret_key_path="$store/secret/$secret/$user@$key_host.key"
 				ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-source "$(dirname "$(dirname $(realpath "${BASH_SOURCE[0]}"))")"/tests/lib-testing.sh
 source "$(dirname "$(dirname $(realpath "${BASH_SOURCE[0]}"))")"/src/sh/littlesecrets.sh
+source "$(dirname "$(dirname $(realpath "${BASH_SOURCE[0]}"))")"/tests/lib-testing.sh
 
 # --
 # Tests add/get secrets
@@ -12,9 +12,15 @@ test-start
 SECRET="Hello, World $(date)!"
 test-step "Add secret"
 ls_store_init
-ls_secret_add hello.world "$SECRET"
+echo -n "$SECRET" | ls_secret_add hello.world
+test-step "Ensures the secret files are there"
+test-exist .littlesecrets/secret/hello.world/secret.enc
+test-exist .littlesecrets/secret/hello.world/"$USER"@"$HOSTNAME".key
+test-step "Ensures the user has a public key"
+test-exist .littlesecrets/user/"$USER"/"$HOSTNAME".pubkey
 
 test-step "Retrieve secret"
+test-expect "$(ls_secret_list | grep hello.world)" "hello.world: sebastien@bench"
 test-expect "$(ls_secret_get hello.world)" "$SECRET"
 
 # --

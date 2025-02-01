@@ -23,6 +23,8 @@ umask 0077
 
 function test-init {
 	test-start "$@"
+	# We ensure the exit is called
+	trap test-cleanup EXIT INT TERM ERR
 }
 
 # --
@@ -137,14 +139,14 @@ function test-abort {
 }
 
 function test-ok {
-	if [ ! -s "$@" ]; then
+	if [ -n "$@" ]; then
 		echo "$(test-prefix)   ✓ $*" >&2
 	fi
 	TEST_LOG+=("✓${TEST_CURRENT}")
 }
 
 function test-fail {
-	if [ ! -z "$@" ]; then
+	if [ -n "$@" ]; then
 		echo "!!! FAIL $*" >&2
 	fi
 	TEST_LOG+=("×")
@@ -302,6 +304,6 @@ function test-empty {
 	fi
 }
 
-trap test-cleanup EXIT INT TERM
+trap test-cleanup EXIT INT TERM ERR
 
 # EOF

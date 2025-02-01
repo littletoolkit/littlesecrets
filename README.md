@@ -47,6 +47,14 @@ littlesecret register alice alice.rsa.pubkey
 littlesecret grant my.little.secret alice
 ```
 
+`littlesecrets` is primarily intended to be used as a devops CLI tool, however
+the store can easily be accessed and decrypted using common programming
+languages thanks to relying on standard primitives.
+
+Overall, `littlesecrets` is designed around a simple workflow and simple,
+well-known, auditable primitives. If the workflows supported by `littlesecrets`
+work for you, then its simplicity and ease of use should make it attractive.
+
 ## Features
 
 - *Zero-Knowledge*: secret stores have no access to the plain text secrets or
@@ -86,7 +94,7 @@ Papers & Articles:
 
 - [Secure and convenient secret management in distributed computer](https://www.wseas.org/multimedia/journals/computers/2016/a565805-087.pdf), Blazej Adamczyk, WSEAS transactions on computers
 
-- [Please Stop Encrypting with RSA Directly](https://soatok.blog/2021/01/20/please-stop-encrypting-with-rsa-directly/), which gives more details on what not to do when using RSA. We are using the recommended approach here.
+- [Please Stop Encrypting with RSA Directly](https://soatok.blog/2021/01/20/please-stop-encrypting-with-rsa-directly/), and its [follow-up](https://soatok.blog/2025/01/31/hell-is-overconfident-developers-writing-encryption-code/) which gives more details on what not to do when using RSA, while also advocating for leaving cryptography to cryptographers. Our view here is that the cryptographic approach we're using is simple and therefore can audited.
 
 - [How we share secrets at a fully remote startup](https://mill.plainopen.com/how-we-share-secrets-at-a-fully-remote-startup) presents a similar approach, and has interesting comments from the community, see Lobsters's stories [1](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote) and [2](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote). Our view is that simplicity is a good feature to have for cryptography, as long as it relies on well-known primitives that are used properly.
 
@@ -99,7 +107,4 @@ Related tools, compared to LittleSecrets:
 - [age](https://github.com/FiloSottile/age): age is a lower-level encryption tool, which could be used as building
   block to achieve similar results.
 
-Overall, `littlesecrets` is designed around a simple workflow and simple,
-well-known, auditable primitives. If the workflows supported by `littlesecrets`
-work for you, then its simplicity and ease of use should make it attractive.
 
