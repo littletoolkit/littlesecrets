@@ -105,7 +105,7 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 : Directory containing encrypted secrets
 
 *.littlesecrets/users/*
-: Directory containing user public keys
+: Directory containing user public keys, organized by user/host (e.g., alice/laptop.pubkey)
 
 # EXAMPLES
 
@@ -127,6 +127,24 @@ echo "mysecret123" | littlesecrets add db.password
 Grant access to a team:
 ```
 littlesecrets grant db.password "dev-*"
+```
+
+Register a user for multiple machines:
+```
+littlesecrets register alice@laptop
+littlesecrets register alice@desktop
+```
+
+List who has access to secrets:
+```
+littlesecrets access              # all secrets
+littlesecrets access "db.*"       # only db-related secrets
+```
+
+Grant access to specific machines:
+```
+littlesecrets grant api.key bob@laptop     # only bob's laptop
+littlesecrets grant api.key bob            # all of bob's machines
 ```
 
 # EXIT STATUS
