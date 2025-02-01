@@ -113,6 +113,11 @@ function ls_log_error {
 	return 0
 }
 
+function ls_log_warning {
+	echo "${ORANGE}/!\\ WRN ${BOLD}$*${RESET}" >&2
+	return 0
+}
+
 function ls_log_output_start {
 	echo -n "${GRAY}" >&2
 }
@@ -264,7 +269,7 @@ function ls_match_item {
 		for item_path in ${store}/${path}; do
 			item="$(basename "$(dirname "$item_path")")"
 			if [ -n "$(ls_match "$item" "$@")" ]; then
-				echo "$item"
+				echo "$item_path"
 			fi
 		done
 	else
@@ -334,7 +339,7 @@ function ls_pubkey_path { #KEYPATH
 	echo "$(ls_ssh_keypair_ensure "$@").pub"
 }
 
-function ls_privkey_new {
+function ls_privkey_new { #KEYPATH
 	ls_mkparent "${1:-}"
 	openssl genrsa -out "${1:-/dev/stdout}" 4096
 }
@@ -358,7 +363,7 @@ function ls_privkey_import { # KEYPATH
 	local res=0
 	case "$keyfmt" in
 	# We obviously only support private keys here
-	private:ssh:*)
+	private:ssh*)
 		keyout_tmp=$(ls_mkstemp)
 		if ls_ispath "$keypath"; then
 			cp -a "$keypath" "$keyout_tmp"
@@ -376,11 +381,10 @@ function ls_privkey_import { # KEYPATH
 		cat "$keypath"
 		;;
 	*)
-		res=1
+		ls_log_error "ls_privkey_import: Unsupported format $keyfmt"
 		;;
 	esac
 	ls_unlink "$keypath_tmp" "$keyout_tmp"
-	return $res
 }
 
 # --
@@ -400,7 +404,7 @@ function ls_pubkey_import { #KEYPATH
 	fi
 	local res=0
 	case "$keyfmt" in
-	private:ssh:*)
+	private:ssh*)
 		keyout_tmp=$(ls_mkstemp)
 		cp -a "$keypath" "${keyout_tmp}"
 		ls_log_output_start
@@ -425,11 +429,21 @@ function ls_pubkey_import { #KEYPATH
 		cat "$keypath"
 		;;
 	*)
+		ls_log_error "ls_pubkey_import: Unsupported key format: $keyfmt"
 		res=1
 		;;
 	esac
 	ls_unlink "$keypath_tmp" "$keyout_tmp"
 	return $res
+}
+
+function ls_key_cat {
+	local key="${1:-}"
+	if [ -e "$key" ]; then
+		cat "$key"
+	else
+		echo -n "$key"
+	fi
 }
 
 function ls_key_id_match { #TYPE FORMATS
@@ -547,7 +561,7 @@ function ls_encoded {
 	LITTLESECRETS_USER="$orig_user"
 	LITTLESECRETS_STORE="$orig_store"
 
-	return $ret
+	return "$ret"
 }
 
 # --
@@ -704,14 +718,14 @@ function ls_store_ensure {
 # --
 # Lists all the users in the store
 function ls_user_list { # EXPR…
-	ls_match_item "user/*/*.pubkey" "$@"
+	ls_match_item "user/*/*.pubkey" "$@" | rev | cut -d/ -f1,2 | rev | sed 's|.pubkey||g;s|/|:|g' | sort
 }
 
 function ls_user_registered { # USER? KEY?
 	local store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 	local user="$(ls_user_name "${1:-}")"
-	local host="$(ls_user_host "${1:-}")"
+	local host="$(ls_user_host "${1:-}" "${2:-}")"
 	local keypath="$store/user/$user/$host.pubkey"
 	if [ -e "$keypath" ]; then
 		echo "$keypath"
@@ -726,16 +740,15 @@ function ls_user_registered { # USER? KEY?
 function ls_user_register { # USER? KEY?
 	local store="$(ls_store_ensure)"
 	local user="$(ls_user_name "${1:-}")"
-	local host="$(ls_user_host "${1:-}")"
+	local host="$(ls_user_host "${1:-}" "${2:-$LITTLESECRETS_KEY}")"
 	local key="$(ls_pubkey_import "${2:-$LITTLESECRETS_KEY}")"
 	local user_key_path="$store/user/$user/$host.pubkey"
 	if [ -z "$key" ]; then
 		ls_log_error "Could not import user public key: $(ls_pubkey_path "${1:-}" "${2:-}")"
 		return 1
 	fi
-	echo "KEY: $key"
 	if [ -e "$user_key_path" ]; then
-		if [ ! cmd -s "$user_key_path" <(echo "$key") ]; then
+		if ! cmp -s "$user_key_path" <(echo "$key"); then
 			# We're overriding a key
 			# TODO: We should probably warn here that the previous secrets
 			# will likely be invalidated
@@ -748,12 +761,6 @@ function ls_user_register { # USER? KEY?
 	fi
 	echo "$user_key_path"
 	return 0
-}
-
-function ls_user_name { # USER?
-	local user="${1:-$LITTLESECRETS_USER}"
-	# Extract username if in user@host format
-	echo "${user%@*}"
 }
 
 function ls_user_list_keys { # USER? HOST?
@@ -777,8 +784,44 @@ function ls_user_list_keys { # USER? HOST?
 	fi
 }
 
-function ls_user_host { # USER?
+# --
+# Tries to extract the user@host from the given key.
+function ls_pubkey_meta { # KEY
+	local key="${1:-}"
+	local fmt="$(ls_key_id "$key")"
+
+	case "$fmt" in
+	public:ssh*)
+		ls_key_cat "$key" | rev | cut -d' ' -f1 | rev
+		;;
+	*) ;;
+	esac
+}
+
+function ls_user_name { # USER? KEY?
 	local user="${1:-$LITTLESECRETS_USER}"
+	local key="${2:-}"
+	if [ -n "$key" ]; then
+		local meta="$(ls_pubkey_meta "$key")"
+		if [ -n "$meta" ]; then
+			ls_user_name "$meta"
+			return 0
+		fi
+	fi
+	# Extract username if in user@host format
+	echo "${user%@*}"
+}
+
+function ls_user_host { # USER? KEY?
+	local user="${1:-$LITTLESECRETS_USER}"
+	local key="${2:-}"
+	if [ -n "$key" ]; then
+		local meta="$(ls_pubkey_meta "$key")"
+		if [ -n "$meta" ]; then
+			ls_user_host "$meta"
+			return 0
+		fi
+	fi
 	if [[ "$user" == *@* ]]; then
 		# Extract hostname from user@host
 		echo "${user#*@}"
@@ -827,7 +870,6 @@ function ls_user_privkey { # KEY?
 	if [[ "$keypath_fmt" == private:pkcs8* ]]; then
 		# The given keypath is already in the right format
 		echo "$keypath"
-		return 0
 	elif [[ "$keypath_pem_fmt" == private:pkcs8* ]]; then
 		# TODO: We should issue a warning if the PEM file is older than than the key
 		# The alternate keypath is in the right formt
@@ -842,7 +884,12 @@ function ls_user_privkey { # KEY?
 # =============================================================================
 
 function ls_secret_list {
-	ls_match_item "secret/*/secret.enc" "$@"
+	for secret in $(ls_match_item "secret/*/secret.enc" "$@"); do
+		local path="$(dirname "$secret")"
+		local name="$(basename "$path")"
+		local keys=$(ls "$path"/*.key | xargs -n1 basename | sed "s|.key||g" | xargs echo -n)
+		echo "$name: $keys"
+	done
 }
 
 function ls_secret_write { # NAME PUBKEY? SECRETKEY?
@@ -884,13 +931,14 @@ function ls_secret_add { # SECRET CONTENT PUBKEY? ENCKEY?
 
 function ls_secret_key_path { # SECRET USER?
 	local store="$(ls_store)"
-	local user=$(ls_user_name)
+	local user=$(ls_user_name "${2:-}")
+	local host=$(ls_user_host "${2:-}")
 	if [ -z "$store" ]; then return 1; fi
-	local secret_key_path="$store/secret/$1/$user.key"
+	local secret_key_path="$store/secret/$1/$user@$host.key"
 	if [ -e "$secret_key_path" ]; then
 		echo "$secret_key_path"
 	else
-		return 1
+		ls_log_warning "ls_secret_key_path: Secret key not defined: user=$user, host=$host, secret=$1"
 	fi
 }
 
@@ -912,7 +960,11 @@ function ls_secret_key { # SECRET PRIVKEY?
 	local secret_key_path="$(ls_secret_key_path "$1")"
 	if [ "$?" != 0 ]; then
 		return 1
+	elif [ -z "$secret_key_path" ]; then
+		ls_log_error "ls_secret_key: Could not retrieve path for secret key $1"
+		return 1
 	else
+		ls_log_message "KEY PATH $secret_key_path"
 		ls_decrypt_asym "$user_privkey" <"$secret_key_path"
 	fi
 }
@@ -960,11 +1012,11 @@ function ls_secret_grant { # SECRET USER_EXPR
 	if [ "$?" != 0 ]; then return 1; fi
 
 	for user_expr in "$@"; do
-		local user=$(ls_user_name "$user_expr")
-		local host=$(ls_user_host "$user_expr")
+		local user="${user_expr%@*}"
 
 		if [[ "$user_expr" == *@* ]]; then
 			# If user@host format, grant only to that specific host
+			local host="${user_expr#*@}"
 			local user_pubkey=$(ls_user_pubkey "$user_expr")
 			if [ -n "$user_pubkey" ]; then
 				local secret_key_path="$store/secret/$secret/$user@$host.key"
@@ -973,6 +1025,7 @@ function ls_secret_grant { # SECRET USER_EXPR
 		else
 			# Otherwise grant to all host keys for the user
 			for pubkey_path in $(ls_user_list_keys "$user"); do
+				echo "USER KEY $pubkey_path"
 				local key_host=$(basename "$pubkey_path" .pubkey)
 				local secret_key_path="$store/secret/$secret/$user@$key_host.key"
 				ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"

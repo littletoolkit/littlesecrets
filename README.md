@@ -88,15 +88,15 @@ Papers & Articles:
 
 - [Please Stop Encrypting with RSA Directly](https://soatok.blog/2021/01/20/please-stop-encrypting-with-rsa-directly/), which gives more details on what not to do when using RSA. We are using the recommended approach here.
 
-- [How we share secrets at a fully remote startup](https://mill.plainopen.com/how-we-share-secrets-at-a-fully-remote-startup) presents a similar approach, and has interesting comments from the community, see Lobsters's stories [1](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote) and [2](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote). Our view is that
+- [How we share secrets at a fully remote startup](https://mill.plainopen.com/how-we-share-secrets-at-a-fully-remote-startup) presents a similar approach, and has interesting comments from the community, see Lobsters's stories [1](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote) and [2](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote). Our view is that simplicity is a good feature to have for cryptography, as long as it relies on well-known primitives that are used properly.
 
 Related tools, compared to LittleSecrets:
 
-- `sops`: Secrets OPerationS is more like a toolbox that can be used to build
+- [sops](https://github.com/getsops/sops): Secrets OPerationS is more like a toolbox that can be used to build
    workflows similar to LittleSecrets, however there is more configuration and
    complexity involved.
 
-- `age`: age is a lower-level encryption tool, which could be used as building
+- [age](https://github.com/FiloSottile/age): age is a lower-level encryption tool, which could be used as building
   block to achieve similar results.
 
 Overall, `littlesecrets` is designed around a simple workflow and simple,

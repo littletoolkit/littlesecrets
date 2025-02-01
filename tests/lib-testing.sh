@@ -236,14 +236,46 @@ function test-relpath {
 	realpath --relative-to="$PWD" "$1"
 }
 
+function test-substring { # STRING STRING…
+	local str="$1"
+	shift
+	for expr in "$@"; do
+		if ! grep -q "$expr" <(echo "$str"); then
+			test-fail "'$str' does not contain: '$expr'"
+			return 1
+		fi
+	done
+	return 0
+
+}
+
+function test-contains { # PATH STRING…
+	local path="$1"
+	shift
+	if [ -e "$path" ]; then
+		test-fail "$(test-relpath "$path") does not exist"
+		return 1
+	else
+		for expr in "$@"; do
+			if ! grep -q "$expr" "$path"; then
+				test-fail "$(test-relpath "$path") does not contain: $expr"
+				return 1
+			fi
+		done
+		return 0
+	fi
+}
+
 function test-exist {
 	for path in "$@"; do
 		if [ ! -e "$path" ]; then
 			test-fail "path does not exists: $path"
+			return 1
 		else
 			test-ok "$(test-relpath "$path") exists"
 		fi
 	done
+	return 0
 }
 
 function test-noempty {
