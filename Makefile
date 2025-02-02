@@ -24,13 +24,13 @@ install: dist/docs/littlesecrets.1
 	@$(call sh-install,cp -a,(copy))
 
 .PHONY: docs
-docs: dist/docs/manual.html docs/littlesecrets.1
+docs: dist/docs/manual.html dist/docs/littlesecrets.1
 	@
 
 dist/docs/manual.html: docs/manual.md
-	@mkdir -p $(DOCS_DIR)
-	cp docs/style.css $(DOCS_DIR)/
-	pandoc docs/manual.md -s --toc -c style.css -o $(DOCS_DIR)/manual.html
+	@mkdir -p $(dir $@)
+	cp docs/style.css $(dir $@)/
+	pandoc docs/manual.md -s --toc -c style.css -o "$@"
 
 dist/docs/littlesecrets.1:
 	@mkdir -p "$(dir $@)"
