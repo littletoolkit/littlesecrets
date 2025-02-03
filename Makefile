@@ -6,7 +6,13 @@ test:
 	bash tests/harness.sh
 
 define sh-install
-	PREFIX="$(if $(HOME),$(HOME)/.local,/usr/local)"
+	PREFIX="$(if $(PREFIX),$(PREFIX),$(if $(HOME),$(HOME)/.local,/usr/local))"
+	if [ -z "$$PREFIX" ]; then
+		echo "!!! ERR: PREFIX is undefined"
+		exit 1
+	else
+		echo "... Installing under: $$PREFIX"
+	fi
 	mkdir -p "$$PREFIX/bin"
 	$1 src/sh/littlesecrets.sh "$$PREFIX/bin/littlesecrets"
 	echo "-> Installed $2 $$PREFIX/bin/littlesecrets"
@@ -26,6 +32,18 @@ install: dist/docs/littlesecrets.1
 .PHONY: docs
 docs: dist/docs/manual.html dist/docs/littlesecrets.1
 	@
+
+.PHONY: compile
+compile: dist/littlesecrets
+	@
+
+dist/littlesecrets: $(wildcard src/sh/*.sh)
+	@mkdir -p $(dir $@)
+	mkdir -p build
+	for file in $^; do cp -a "$$file" build; done;
+	echo "#!$$(which bash)" > "build/$(notdir $<)"
+	tail -n +2 "$<" >> "build/$(notdir $<)"
+	shc -U -f "build/$(notdir $<)" -o "$@"
 
 dist/docs/manual.html: docs/manual.md
 	@mkdir -p $(dir $@)

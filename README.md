@@ -92,6 +92,15 @@ Some caveats of the cryptographic model:
 - Due to its stateless design, there is no audit log. Instead, we recommend
   to store the secrets in a Git repository for auditing.
 
+And some more general caveats for security:
+
+- The CLI tool uses the shell and temporary files (cleanup, with appropriate
+  permissions), which offers a window for a local attack.
+
+- The CLI tool does not do strong input validation, it's mean to be run by
+  yourself directly.
+
+
 ## References
 
 Papers & Articles:
@@ -108,7 +117,6 @@ Related tools, compared to LittleSecrets:
    workflows similar to LittleSecrets, however there is more configuration and
    complexity involved.
 
-- [age](https://github.com/FiloSottile/age): age is a lower-level encryption tool, which could be used as building
-  block to achieve similar results.
+- [age](https://github.com/FiloSottile/age): age is a lower-level encryption tool, which we could use in lieu of the RSA/AES combo, however, this would require encrypting the secret for each user, therefore taking more space and requiring proof of the secret's original value, while also limiting the ability to decrypt to platform that have age implemented.
 
 

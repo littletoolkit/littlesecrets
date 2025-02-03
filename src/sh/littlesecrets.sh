@@ -5,7 +5,6 @@
 # | | | |_| |_| |  __/\ \  __/ (__| | |  __/ |_\__ \
 # |_|_|\__|\__|_|\___\__/\___|\___|_|  \___|\__|___/
 
-# TODO: Support using age as a backend
 # TODO: We should never check if the key a path by using -f, this will leak the key to the OS
 
 # --
