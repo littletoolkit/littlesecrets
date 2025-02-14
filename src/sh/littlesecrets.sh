@@ -616,6 +616,16 @@ function ls_encrypt_sym { # KEY
 }
 
 # --
+# Generates the signature for the given key
+function ls_hmac { # KEY
+	ls_log_output_start
+	if ! openssl dgst -sha256 -hmac "$1"; then
+		ls_log_error "ls_hmac: Could not generate secret HMAC"
+	fi
+	ls_log_output_end
+}
+
+# --
 # Decrypts `1:SECRET` (encoded) with `2:KEY` (encoded), returning the
 # decrypted secrets (unencoded)
 function ls_decrypt_sym { # KEY

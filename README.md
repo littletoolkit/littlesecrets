@@ -78,6 +78,10 @@ Some caveats of the cryptographic model:
 
 - We assume 2048bit for RSA keys, although this can be parameterised.
 
+- We use AES-256-CBC as most OpenSSL distributions don't support GCM yet (see `openssl aes-256-gcm` returning `aes-256-gcm: AEAD ciphers not supported`).
+
+- Using AES-256-GCM instead of AES-256-CBC does not provide authentication.
+
 - We do not provide integrity verification of encrypted secrets, an attacker
   could replace an existing secret, however this can be mitigated when
   using a repository like Git to store secrets.
@@ -96,7 +100,7 @@ Papers & Articles:
 
 - [Please Stop Encrypting with RSA Directly](https://soatok.blog/2021/01/20/please-stop-encrypting-with-rsa-directly/), and its [follow-up](https://soatok.blog/2025/01/31/hell-is-overconfident-developers-writing-encryption-code/) which gives more details on what not to do when using RSA, while also advocating for leaving cryptography to cryptographers. Our view here is that the cryptographic approach we're using is simple and therefore can audited.
 
-- [How we share secrets at a fully remote startup](https://mill.plainopen.com/how-we-share-secrets-at-a-fully-remote-startup) presents a similar approach, and has interesting comments from the community, see Lobsters's stories [1](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote) and [2](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote). Our view is that simplicity is a good feature to have for cryptography, as long as it relies on well-known primitives that are used properly.
+- [How we share secrets at a fully remote startup](https://mill.plainopen.com/how-we-share-secrets-at-a-fully-remote-startup) presents a similar approach, and has interesting comments from the community, see Lobsters's stories [1](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote) and [2](https://lobste.rs/s/wfmynv/how_we_share_secrets_at_fully_remote). Our view is that simplicity is a good feature to have for cryptography, as long as it relies on well-known primitives that are used properly, and that the caveats are clear.
 
 Related tools, compared to LittleSecrets:
 

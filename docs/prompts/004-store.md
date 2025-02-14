@@ -11,8 +11,9 @@ The store is expected to store data in hierarchical fashion, following this stru
 ```
 secrets/                       # Stores the secrets
   <name>/
-    secret.raw                 # Secret, encrypted with its Key
-    secret.json                # Secret format and metadata
+    secret.raw                 # Secret, encrypted with its key
+    secret.hmac                # HMAC of secret and encryption key
+    secret.meta                # Metadata for the secret as `KEY:VALUE` lines
     <user>.<host>.enkey        # Secret EncKey matching the User & Host PubKey
 
 users/                         # Stores the users
