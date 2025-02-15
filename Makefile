@@ -3,7 +3,7 @@ all: test-keys test docs
 
 .PHONY: test
 test:
-	bun test ./tests/*.js
+	bash tests/harness.sh
 
 define sh-install
 	PREFIX="$(if $(HOME),$(HOME)/.local,/usr/local)"

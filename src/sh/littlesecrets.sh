@@ -1073,6 +1073,22 @@ function ls_secret_get { # NAME PRIVKEY?
 	return "$res"
 }
 
+function ls_secret_verify { # NAME PRIVEY?
+	local store="$(ls_store)"
+	local secret_hmac_path="$store/secret/$1/secret.hmac"
+	if [ ! -e "$secret_hmac_path" ]; then
+		return 0
+	fi
+	local hmac="$(ls_secret_hmac "$1" "$(ls_secret_key "$1" "${2:-}")")"
+	if [ $? -ne 0 ]; then
+		return 1
+	elif [ "$(cat "$secret_hmac_path")" != "$hmac" ]; then
+		return 1
+	else
+		return 0
+	fi
+}
+
 function ls_secret_remove { # SECRET
 	local store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
@@ -1277,7 +1293,13 @@ function ls_cli {
 			ls_log_error "get: Missing secret name"
 			return 1
 		fi
-		ls_secret_get "$1" "${2:-}"
+		if [ -n "$(ls_option hmac)" ] && ! ls_secret_verify "$1"; then
+			ls_log_error "Secret signature differs: $1"
+			ls_log_tip "Secret likely has been updated and your key is out of date"
+			return 1
+		else
+			ls_secret_get "$1" "${2:-}"
+		fi
 		;;
 	## add|set <name> [value] Set a secret's value
 	"add" | "set")
