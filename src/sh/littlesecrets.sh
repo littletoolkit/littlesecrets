@@ -26,6 +26,7 @@ LITTLESECRETS_KEY=${LITTLESECRETS_KEY:-$HOME/.ssh/id_rsa}
 LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
 LITTLESECRETS_KEYSIZE=2048 # NOTE: It would be best to do 4096, and we should test keys
+LITTLESECRETS_OPTIONS=hmac
 
 # -----------------------------------------------------------------------------
 #
@@ -51,6 +52,7 @@ if [ -z "${NOCOLOR:-}" ]; then
 	RED="$(tput setaf 124)"
 	ORANGE="$(tput setaf 202)"
 	BOLD="$(tput bold)"
+	DIM="$(tput dim)"
 	REVERSE="$(tput rev)"
 	RESET="$(tput sgr0)"
 elif tput setaf 1 &>/dev/null; then
@@ -68,6 +70,7 @@ elif tput setaf 1 &>/dev/null; then
 	RED=""
 	ORANGE=""
 	BOLD=""
+	DIM=""
 	REVERSE=""
 	RESET=""
 fi
@@ -284,6 +287,14 @@ function ls_match_item {
 		done
 	else
 		return 1
+	fi
+}
+
+# --
+# Returns the option name if is defined
+function ls_option { # OPTION
+	if [[ $LITTLESECRETS_OPTIONS == *"$1"* ]]; then
+		echo "$1"
 	fi
 }
 
@@ -619,7 +630,7 @@ function ls_encrypt_sym { # KEY
 # Generates the signature for the given key
 function ls_hmac { # KEY
 	ls_log_output_start
-	if ! openssl dgst -sha256 -hmac "$1"; then
+	if ! openssl dgst -sha256 -hmac "$1" | cut -d' ' -f2; then
 		ls_log_error "ls_hmac: Could not generate secret HMAC"
 	fi
 	ls_log_output_end
@@ -912,14 +923,29 @@ function ls_secret_list {
 	for secret in $(ls_match_item "secret/*/secret.enc" "$@"); do
 		local path="$(dirname "$secret")"
 		local name="$(basename "$path")"
-		local keys=$(ls "$path"/*.key | xargs -n1 basename | sed "s|.key||g" | xargs echo -n)
-		echo "$name: $keys"
+		local keys=$(ls "$path"/*.key 2>/dev/null)
+		if [ -n "$keys" ]; then
+			echo "$name"
+		else
+			ls_log_warning "Empty secrets folder: $path"
+		fi
 	done
+}
+
+function ls_secret_keys { # SECRET
+	local path="$(ls_secret_path "$1")"
+	local keys=$(ls "$path"/*.key 2>/dev/null)
+	if [ -n "$keys" ]; then
+		echo "$keys" | xargs -n1 basename | sed "s|.key||g" | xargs echo -n
+	fi
 }
 
 function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	local secret="$1"
 	local secret_path="$(ls_store)/secret/$secret/secret.enc"
+	local secret_hmac_path="$(ls_store)/secret/$secret/secret.hmac"
+	local has_hmac="$(ls_option hmac)"
+	# This creates the secret key, if it is not given. Not the key is ls_encoded.
 	local secret_key="${3:-}"
 	if [ -z "$secret_key" ]; then
 		secret_key="$(ls_key)"
@@ -956,6 +982,10 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 			ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
 		done
 	fi
+	if [ -n "$has_hmac" ]; then
+		ls_log_action "ls_secret_write: Saving secret signature to $secret_hmac_path"
+		ls_secret_hmac "$1" "$secret_key" >"$secret_hmac_path"
+	fi
 	echo "$secret_path"
 }
 
@@ -985,8 +1015,8 @@ function ls_secret_path { # SECRET
 	local secret="$1"
 	local store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
-	local secret_path="$store/secret/$secret/secret.enc"
-	if [ ! -e "$secret_path" ]; then
+	local secret_path="$store/secret/$secret"
+	if [ ! -e "$secret_path/secret.enc" ]; then
 		return 1
 	else
 		echo "$secret_path"
@@ -1004,6 +1034,20 @@ function ls_secret_key { # SECRET PRIVKEY?
 	else
 		ls_decrypt_asym "$user_privkey" <"$secret_key_path"
 	fi
+}
+
+function ls_secret_hmac { #SECRET
+	# NOTE: Here the key is base64 encoded as otherwise
+	# we get null byte errors.
+	local secret_key="${2:-}"
+	if [ -z "$secret_key" ]; then
+		secret_key="$(ls_secret_key "$1")"
+	fi
+	ls_secret_get "$1" | ls_hmac "$(echo -n "$secret_key" | ls_decode | openssl base64 -d -A)"
+}
+
+function ls_secret_hmac_path { #SECRET
+	echo "$(ls_secret_path "$1")/secret.hmac"
 }
 
 function ls_secret_get { # NAME PRIVKEY?
@@ -1223,7 +1267,9 @@ function ls_cli {
 		;;
 	## list|ls [expr...]  List secrets matching expr
 	"list" | "ls")
-		ls_secret_list "$@"
+		for SECRET in $(ls_secret_list "$@"); do
+			echo "${BOLD}$SECRET${RESET}: ${DIM}$(ls_secret_keys "$SECRET")${RESET}"
+		done
 		;;
 	## get <name>         Get a secret's value
 	"get")
@@ -1245,6 +1291,52 @@ function ls_cli {
 		else
 			# Read content from stdin
 			ls_secret_add "$1" "" "${2:-}" "${3:-}"
+		fi
+		;;
+	## hash NAMES* Ensures the secrets habe a matching hash
+	"hash")
+		for SECRET in $(ls_secret_list "$@"); do
+			SECRET="${SECRET%%:*}"
+			HMAC_PATH="$(ls_secret_hmac_path "$SECRET")"
+			HMAC="$(ls_secret_hmac "$SECRET")"
+			if [ ! -e "$HMAC_PATH" ]; then
+				ls_log_action "Creating HMAC for secret $SECRET at $HMAC_PATH"
+				echo -n "$HMAC" >"$HMAC_PATH"
+			elif [ "$(cat "$HMAC_PATH")" != "$HMAC" ]; then
+				ls_log_warning "Existing HMAC differs for secret $SECRET, updating."
+				echo -n "$HMAC" >"$HMAC_PATH"
+			fi
+		done
+		;;
+	## verify NAMES* Verifies the decrypted secret against the hash
+	"verify")
+		valid=()
+		invalid=()
+		nokey=()
+		for SECRET in $(ls_secret_list "$@"); do
+			SECRET="${SECRET%%:*}"
+			HMAC_PATH="$(ls_secret_hmac_path "$SECRET")"
+			echo -n "Verifying $SECRET… "
+			if [ ! -e "$HMAC_PATH" ]; then
+				nokey+=($SECRET)
+				echo "${ORANGE}no hash${RESET}"
+			elif [ "$(cat "$HMAC_PATH")" != "$(ls_secret_hmac "$SECRET")" ]; then
+				ls_log_warning "Existing HMAC differs for secret $SECRET"
+				ls_log_tip "Most likely the original secret has changed and you haven't been granted the key."
+				invalid+=($SECRET)
+				echo "${RED}INVALID${RESET}"
+			else
+				valid+=($SECRET)
+				echo "${GREEN}OK${RESET}"
+			fi
+		done
+		if [ ${#valid[@]} -ne 0 ]; then ls_log_message "Valid: ${GREEN}${valid[@]}${RESET}"; fi
+		if [ ${#invalid[@]} -ne 0 ]; then ls_log_message "Invalid: ${RED}${invalid[@]}${RESET}"; fi
+		if [ ${#nokey[@]} -ne 0 ]; then ls_log_message "Unverified: ${BLUE}${nokey[@]}${RESET}"; fi
+		if [ ${#invalid[@]} -eq 0 ]; then
+			return 0
+		else
+			return 1
 		fi
 		;;
 	## remove <name>      Remove a secret

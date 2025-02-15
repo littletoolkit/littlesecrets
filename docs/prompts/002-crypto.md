@@ -2,13 +2,14 @@
 
 The core cryptography works as such:
 
-- Users register their SSH public key in the shared secrets.
+- Users register their SSH (RSA) public key in the shared secrets.
 - A secret is encrypted using a randomly generated key, which is kept secret, and then stored.
-- Before being stored, the key will be encrypted with the user's registered
-  SSH public key.
+- Before being stored, the key will be encrypted with the user's registered SSH (RSA) public key.
 - The user can grant other user's access to the secret by decrypting the secret's encryption key,
   and encrypting it with the other user's SSH public key.
 - A secret can be revoked by removing the encrypted secret, or re-encrypting it.
+- A secret can have an associated HMAC signature using the secret as the
+  message and the secret encryption key in base64 as the key.
 
 Note that:
 
@@ -17,11 +18,20 @@ Note that:
 
 In practice:
 
-- Secrets are symmetrically encrypted using a random key
+- Secrets are symmetrically encrypted using AES-256-CBC and a random key, which length is based on the default RSA key length.
 - Secret encryption key is asymmetrically encrypted using an RSA keypair
 - An RSA private key either in SSH or PEM (openssl) format
 - An RSA public key in PEM (openssl) format, optional as it can be derived from the private key
 - An secret encryption key no longer than what the RSA keypair can encrypt
+
+Some considerations of this system:
+
+- AES-256-CBC is used alongside HMAC in place of AES-256-GCM as the GCM version
+  is not widely available using the `openssl` CLI, and we want to minimize dependencies.
+- HMAC uses the encryption key in base64 format primarily due to shell implementation
+  limitations, this has no effect on entropy.
+- Secrets and key storage should be version controlled using a system like git, which
+  then provides auditability.
 
 In shell, the symmetric encryption works like so:
 
