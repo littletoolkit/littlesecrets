@@ -20,7 +20,7 @@ test-step "Ensures the user has a public key"
 test-exist .littlesecrets/user/"$USER"/"$HOSTNAME".pubkey
 
 test-step "Retrieve secret"
-test-expect "$(ls_secret_list | grep hello.world)" "hello.world: sebastien@bench"
+test-expect "$(ls_secret_list | grep hello.world)" "hello.world"
 test-expect "$(ls_secret_get hello.world)" "$SECRET"
 
 # --

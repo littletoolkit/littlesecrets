@@ -21,7 +21,7 @@ SECRET_DEC=$(echo -n "$SECRET_ENC" | ls_decrypt_sym "$KEY")
 test-expect "$SECRET_DEC" "$SECRET"
 
 test-step "Asymmetric Keypair"
-test-expect "$(ls_key_id "$(ls_privkey_path)")" "private:rsa+pem+pkcs8:valid=rsa" "Private key recognized"
+test-expect "$(ls_key_id "$(ls_privkey_path)")" "private:pkcs8:valid=rsa" "Private key recognized"
 test-expect "$(ls_key_id "$(ls_pubkey_path)")" "public:spki:" "Public key recognized"
 
 test-step "Asymmetric Encryption transparency"

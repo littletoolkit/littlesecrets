@@ -18,6 +18,63 @@ TEST_COUNT=0
 TEST_CURRENT=0
 TEST_CURRENT_ERRORS=0
 
+# --
+# Color library
+if [ -z "${NOCOLOR:-}" ]; then
+	CYAN="$(tput setaf 33)"
+	BLUE_DK="$(tput setaf 27)"
+	BLUE="$(tput setaf 33)"
+	BLUE_LT="$(tput setaf 117)"
+	GREEN="$(tput setaf 34)"
+	YELLOW="$(tput setaf 220)"
+	GRAY="$(tput setaf 153)"
+	GOLD="$(tput setaf 214)"
+	GOLD_DK="$(tput setaf 208)"
+	PURPLE_DK="$(tput setaf 55)"
+	PURPLE="$(tput setaf 92)"
+	PURPLE_LT="$(tput setaf 163)"
+	RED="$(tput setaf 124)"
+	ORANGE="$(tput setaf 202)"
+	BOLD="$(tput bold)"
+	DIM="$(tput dim)"
+	REVERSE="$(tput rev)"
+	RESET="$(tput sgr0)"
+elif tput setaf 1 &>/dev/null; then
+	CYAN=""
+	BLUE_DK=""
+	BLUE=""
+	BLUE_LT=""
+	GREEN=""
+	YELLOW=""
+	GOLD=""
+	GOLD_DK=""
+	PURPLE_DK=""
+	PURPLE=""
+	PURPLE_LT=""
+	RED=""
+	ORANGE=""
+	BOLD=""
+	DIM=""
+	REVERSE=""
+	RESET=""
+fi
+export CYAN BLUE_DK
+export BLUE
+export BLUE_LT
+export GREEN
+export GRAY
+export YELLOW
+export GOLD
+export GOLD_DK
+export PURPLE_DK
+export PURPLE
+export PURPLE_LT
+export RED
+export ORANGE
+export BOLD
+export REVERSE
+export RESET
+
 # Test data is not public, so we restrict the umask.
 umask 0077
 
@@ -68,7 +125,9 @@ function test-diff {
 function test-expect {
 	if [ "$1" != "$2" ]; then
 		test-fail "Output differ" "${3:-}"
+		echo -n "$ORANGE" >&2
 		test-diff "$1" "$2"
+		echo "$RESET" >&2
 	else
 		test-ok "${3:-}"
 	fi
@@ -80,13 +139,12 @@ function test-case {
 
 function test-step {
 	((TEST_COUNT += 1))
-	echo "[$TEST_NAME] $(test-id) === $@" >&2
+	echo "$(test-prefix)${BLUE} === ${BOLD}$@${RESET}" >&2
+
 	if [ "$TEST_CURRENT" != "$TEST_COUNT" ]; then
 		if [ "$TEST_CURRENT_ERRORS" != "${#TEST_ERRORS[*]}" ]; then
 			local errcount=${#TEST_ERRORS[*]}
 			test-error "FAIL $((errcount - TEST_CURRENT_ERRORS)) error(s)"
-		else
-			test-log "OK"
 		fi
 	fi
 	TEST_CURRENT=$TEST_COUNT
@@ -98,25 +156,25 @@ function test-id {
 }
 
 function test-log {
-	echo "[$TEST_NAME] $(test-id) ... $@" >&2
+	echo "$(test-prefix) ... $@" >&2
 }
 
 function test-output {
-	echo "[$TEST_NAME] $(test-id) >>>" >&2
+	echo "$(test-prefix) >>>" >&2
 	echo "$@" >&2
 	echo "<<<" >&2
 }
 
 function test-info {
-	echo "[$TEST_NAME] $(test-id)   → $@" >&2
+	echo "$(test-prefix)   → $@" >&2
 }
 
 function test-prefix {
-	echo -n "[$TEST_NAME] $(test-id)"
+	echo -n "${BLUE}${DIM}[$TEST_NAME] ${BOLD}$(test-id)${RESET}"
 }
 
 function test-error {
-	echo "[$TEST_NAME] $(test-id) !!! $@" >&2
+	echo "$(test-prefix)${RED} !!! $@${RESET}" >&2
 }
 
 function test-run {
@@ -134,29 +192,30 @@ function test-run {
 
 function test-abort {
 	echo "$@" >&2
-	TEST_ERRORS+=("F${TEST_CURRENT}")
+	TEST_LOG+=("☇")
+	TEST_ERRORS+=($(test-id))
 	test-cleanup
 }
 
 function test-ok {
 	if [ -n "$@" ]; then
-		echo "$(test-prefix)   ✓ $*" >&2
+		echo "$(test-prefix)${GREEN}   ✓ ${RESET}${DIM}$@${RESET}" >&2
 	fi
 	TEST_LOG+=("✓${TEST_CURRENT}")
 }
 
 function test-fail {
-	if [ -n "$@" ]; then
-		echo "!!! FAIL $*" >&2
+	if [ -n "${1:-}" ]; then
+		echo "$(test-prefix)${RED} !!! FAIL $@${RESET}" >&2
 	fi
 	TEST_LOG+=("×")
-	TEST_ERRORS+=("F${TEST_CURRENT}")
+	TEST_ERRORS+=($(test-id))
 }
 
 function test-err {
 	echo "$@" >&2
 	TEST_LOG+=("×")
-	TEST_ERRORS+=("E${TEST_CURRENT}")
+	TEST_ERRORS+=($(test-id))
 }
 
 function test-data {
@@ -189,15 +248,13 @@ function test-cleanup {
 	local en=${#TEST_ERRORS[@]}
 	local tn=$((sn + en))
 	if [ "$tn" == 0 ]; then
-		echo "[$TEST_NAME] EOK (0/0)" >&2
+		echo "${BLUE}[$TEST_NAME] ${GREEN}${BOLD}EOK (0/0)${RESET}" >&2
 	elif [ ${#TEST_ERRORS[@]} -eq 0 ]; then
-		echo "[$TEST_NAME] EOK ($sn/$tn) $((100 * sn / tn))%: ${TEST_LOG[@]}" >&2
+		echo "${BLUE}[$TEST_NAME] ${GREEN}${BOLD}EOK${RESET}${GREEN} ($sn/$tn) $((100 * sn / tn))%: ${TEST_LOG[@]}${RESET}" >&2
 		return 0
 	else
-		for err in "${TEST_ERRORS[@]}"; do
-			echo "$err" >&2
-		done
-		echo "[$TEST_NAME] EFAIL ($en/$tn) $((100 * sn / tn))%" >&2
+		echo "${BLUE}[$TEST_NAME] ${RED}FAIL  ${BOLD}${TEST_ERRORS[@]}${RESET}" >&2
+		echo "${BLUE}[$TEST_NAME] ${ORANGE}${BOLD}EFAIL${RESET}${RED} ($en/$tn) $((100 * sn / tn))%${RESET}" >&2
 		return 1
 	fi
 }
