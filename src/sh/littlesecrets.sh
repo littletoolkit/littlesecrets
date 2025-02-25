@@ -1197,6 +1197,26 @@ function ls_user_deregister { # USER KEY?
 	fi
 }
 
+function ls_secret_export {
+	# This exports as a shell script, but we could export to other formats if
+	# necessary.
+	if [ $# -eq 0 ]; then
+		ls_secret_export "$(ls_secret_list)"
+	else
+		local env=""
+		local sec=""
+		for var in "$@"; do
+			env="${var%%=*}"
+			secname="${var##*=}"
+			if [ "$env" == "$secname" ]; then
+				env="${env^^}"
+				env="${env//./_}"
+			fi
+			echo "export $env=$(ls_secret_get "$secname")"
+		done
+	fi
+}
+
 # -----------------------------------------------------------------------------
 #
 # CLI
@@ -1412,6 +1432,10 @@ function ls_cli {
 				echo
 			done
 		fi
+		;;
+	## export [VAR=secret...]   Exports the given secrets as variables
+	"export")
+		ls_secret_export "$@"
 		;;
 	*)
 		if [ -n "$cmd" ]; then
