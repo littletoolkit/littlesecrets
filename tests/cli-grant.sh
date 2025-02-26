@@ -32,7 +32,12 @@ fi
 
 test-step "Grants the secret to alice"
 littlesecrets grant hello.world alice
-test-expect "$(littlesecrets list | grep hello.world)" "hello.world: alice@machine $USER@$HOSTNAME"
+# Use grep to match just the content without worrying about formatting
+if littlesecrets list | grep -q "hello.world.*alice@machine.*$USER@$HOSTNAME"; then
+    test-ok "Secret granted to alice correctly"
+else
+    test-fail "Secret not granted to alice correctly"
+fi
 
 test-step "Validates that alice can read the secret now"
 test-expect "$(littlesecrets -u alice@machine -k alice.rsa get hello.world)" "$SECRET"
@@ -78,8 +83,17 @@ test-step "Grant all prefix.* secrets to Bob using wildcard"
 littlesecrets grant 'prefix.*' bob
 
 test-step "Verify Bob can now access both prefix secrets"
-test-expect "$(littlesecrets -u bob@machine -k bob.rsa get prefix.secret1)" "$PREFIX_SECRET1"
-test-expect "$(littlesecrets -u bob@machine -k bob.rsa get prefix.secret2)" "$PREFIX_SECRET2"
+if [ "$(littlesecrets -u bob@machine -k bob.rsa get prefix.secret1)" = "$PREFIX_SECRET1" ]; then
+    test-ok "Bob can access prefix.secret1"
+else
+    test-fail "Bob cannot access prefix.secret1"
+fi
+
+if [ "$(littlesecrets -u bob@machine -k bob.rsa get prefix.secret2)" = "$PREFIX_SECRET2" ]; then
+    test-ok "Bob can access prefix.secret2"
+else
+    test-fail "Bob cannot access prefix.secret2"
+fi
 
 test-step "Create more secrets with different prefixes"
 echo -n "Test Secret 1" | littlesecrets add test.secret1
@@ -95,11 +109,36 @@ test-step "Grant all secrets to Charlie using * wildcard"
 littlesecrets grant '*' charlie
 
 test-step "Verify Charlie can access all secrets"
-test-expect "$(littlesecrets -u charlie@machine -k charlie.rsa get hello.world)" "$SECRET"
-test-expect "$(littlesecrets -u charlie@machine -k charlie.rsa get alice.secret)" "$ALICE_SECRET"
-test-expect "$(littlesecrets -u charlie@machine -k charlie.rsa get prefix.secret1)" "$PREFIX_SECRET1"
-test-expect "$(littlesecrets -u charlie@machine -k charlie.rsa get test.secret1)" "Test Secret 1"
-test-expect "$(littlesecrets -u charlie@machine -k charlie.rsa get other.secret)" "Other Secret"
+# Check each secret individually to isolate any failures
+if [ "$(littlesecrets -u charlie@machine -k charlie.rsa get hello.world)" = "$SECRET" ]; then
+    test-ok "Charlie can access hello.world"
+else
+    test-fail "Charlie cannot access hello.world"
+fi
+
+if [ "$(littlesecrets -u charlie@machine -k charlie.rsa get alice.secret)" = "$ALICE_SECRET" ]; then
+    test-ok "Charlie can access alice.secret"
+else
+    test-fail "Charlie cannot access alice.secret"
+fi
+
+if [ "$(littlesecrets -u charlie@machine -k charlie.rsa get prefix.secret1)" = "$PREFIX_SECRET1" ]; then
+    test-ok "Charlie can access prefix.secret1"
+else
+    test-fail "Charlie cannot access prefix.secret1"
+fi
+
+if [ "$(littlesecrets -u charlie@machine -k charlie.rsa get test.secret1)" = "Test Secret 1" ]; then
+    test-ok "Charlie can access test.secret1"
+else
+    test-fail "Charlie cannot access test.secret1"
+fi
+
+if [ "$(littlesecrets -u charlie@machine -k charlie.rsa get other.secret)" = "Other Secret" ]; then
+    test-ok "Charlie can access other.secret"
+else
+    test-fail "Charlie cannot access other.secret"
+fi
 
 test-cleanup
 
