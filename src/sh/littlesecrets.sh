@@ -1103,30 +1103,50 @@ function ls_secret_remove { # SECRET
 function ls_secret_grant { # SECRET USER_EXPR
 	local store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
-	local secret="$1"
+	local secret_pattern="$1"
 	shift
-	local secret_key=$(ls_secret_key "$secret")
-	if [ "$?" != 0 ]; then return 1; fi
-
-	for user_expr in "$@"; do
-		local user="${user_expr%@*}"
-
-		if [[ "$user_expr" == *@* ]]; then
-			# If user@host format, grant only to that specific host
-			local host="${user_expr#*@}"
-			local user_pubkey=$(ls_user_pubkey "$user_expr")
-			if [ -n "$user_pubkey" ]; then
-				local secret_key_path="$store/secret/$secret/$user@$host.key"
-				ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
-			fi
-		else
-			# Otherwise grant to all host keys for the user
-			for pubkey_path in $(ls_user_list_keys "$user"); do
-				local key_host=$(basename "$pubkey_path" .pubkey)
-				local secret_key_path="$store/secret/$secret/$user@$key_host.key"
-				ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
-			done
+	
+	# Get list of matching secrets
+	local matching_secrets=()
+	for s in $(ls_secret_list "$secret_pattern"); do
+		matching_secrets+=("$s")
+	done
+	
+	if [ ${#matching_secrets[@]} -eq 0 ]; then
+		ls_log_warning "No secrets match pattern: $secret_pattern"
+		return 1
+	fi
+	
+	# Process each matching secret
+	for secret in "${matching_secrets[@]}"; do
+		local secret_key=$(ls_secret_key "$secret")
+		if [ "$?" != 0 ]; then
+			ls_log_warning "Could not retrieve key for secret: $secret"
+			continue
 		fi
+		
+		ls_log_message "Granting access to secret: $secret"
+		
+		for user_expr in "$@"; do
+			local user="${user_expr%@*}"
+
+			if [[ "$user_expr" == *@* ]]; then
+				# If user@host format, grant only to that specific host
+				local host="${user_expr#*@}"
+				local user_pubkey=$(ls_user_pubkey "$user_expr")
+				if [ -n "$user_pubkey" ]; then
+					local secret_key_path="$store/secret/$secret/$user@$host.key"
+					ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
+				fi
+			else
+				# Otherwise grant to all host keys for the user
+				for pubkey_path in $(ls_user_list_keys "$user"); do
+					local key_host=$(basename "$pubkey_path" .pubkey)
+					local secret_key_path="$store/secret/$secret/$user@$key_host.key"
+					ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
+				done
+			fi
+		done
 	done
 }
 
@@ -1395,7 +1415,7 @@ function ls_cli {
 			ls_log_error "grant: Missing secret name or user pattern"
 			return 1
 		fi
-		ls_secret_grant "$1" "$2"
+		ls_secret_grant "$1" "${@:2}"
 		;;
 	## revoke <name> <expr...> Revoke access from users matching expr
 	"revoke")
