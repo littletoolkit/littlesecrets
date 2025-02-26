@@ -26,6 +26,9 @@ LITTLESECRETS_KEY=${LITTLESECRETS_KEY:-$HOME/.ssh/id_rsa}
 LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
 LITTLESECRETS_KEYSIZE=2048 # NOTE: It would be best to do 4096, and we should test keys
+# --
+# Options:
+# - hmac: stores the secret HMAC for verification
 LITTLESECRETS_OPTIONS=hmac
 
 # -----------------------------------------------------------------------------
@@ -1105,18 +1108,18 @@ function ls_secret_grant { # SECRET USER_EXPR
 	if [ -z "$store" ]; then return 1; fi
 	local secret_pattern="$1"
 	shift
-	
+
 	# Get list of matching secrets
 	local matching_secrets=()
 	for s in $(ls_secret_list "$secret_pattern"); do
 		matching_secrets+=("$s")
 	done
-	
+
 	if [ ${#matching_secrets[@]} -eq 0 ]; then
 		ls_log_warning "No secrets match pattern: $secret_pattern"
 		return 1
 	fi
-	
+
 	# Process each matching secret
 	for secret in "${matching_secrets[@]}"; do
 		local secret_key=$(ls_secret_key "$secret")
@@ -1124,9 +1127,9 @@ function ls_secret_grant { # SECRET USER_EXPR
 			ls_log_warning "Could not retrieve key for secret: $secret"
 			continue
 		fi
-		
+
 		ls_log_message "Granting access to secret: $secret"
-		
+
 		for user_expr in "$@"; do
 			local user="${user_expr%@*}"
 
@@ -1225,7 +1228,7 @@ function ls_secret_export {
 	else
 		local env=""
 		local sec=""
-		for var in "$@"; do
+		for var in $@; do
 			env="${var%%=*}"
 			secname="${var##*=}"
 			if [ "$env" == "$secname" ]; then
