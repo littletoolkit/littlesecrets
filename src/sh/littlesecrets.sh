@@ -266,7 +266,7 @@ function ls_match { # TEXT EXPR…
 		return 0
 	else
 		for pattern in "$@"; do
-			if [[ "$text" == $pattern ]]; then
+			if [[ "$text" == "$pattern" ]]; then
 				echo "$text"
 				return 0
 			fi
@@ -510,7 +510,6 @@ function ls_key_id {
 		cat /dev/stdin >"$tmp_file"
 		file="$tmp_file"
 	fi
-	local result=""
 
 	# Skip if not a regular file
 	if [ ! -f "$file" ]; then
@@ -578,13 +577,6 @@ function ls_encoded {
 		return 1
 		;;
 	esac
-
-	# Restore original values
-	LITTLESECRETS_KEY="$orig_key"
-	LITTLESECRETS_USER="$orig_user"
-	LITTLESECRETS_STORE="$orig_store"
-
-	return "$ret"
 }
 
 # --
@@ -730,7 +722,7 @@ function ls_store_init {
 	if [ ! -e "$parent/$LITTLESECRETS_STORE_NAME" ]; then
 		mkdir -p "$parent/$LITTLESECRETS_STORE_NAME"
 	fi
-	echo "$(realpath "$parent/$LITTLESECRETS_STORE_NAME")"
+	realpath "$parent/$LITTLESECRETS_STORE_NAME"
 }
 
 # --
@@ -1223,16 +1215,15 @@ function ls_secret_export {
 	# This exports as a shell script, but we could export to other formats if
 	# necessary.
 	if [ $# -eq 0 ]; then
-		ls_secret_export "$(ls_secret_list)"
+		ls_secret_export $(ls_secret_list)
 	else
 		local env=""
 		local sec=""
-		for var in $@; do
+		for var in "$@"; do
 			env="${var%%=*}"
 			secname="${var##*=}"
 			if [ "$env" == "$secname" ]; then
-				env="${env^^}"
-				env="${env//./_}"
+				env="$(echo "${env//./_}" | tr 'a-z' 'A-Z')"
 			fi
 			echo "export $env=$(ls_secret_get "$secname")"
 		done
@@ -1253,7 +1244,6 @@ function ls_cli {
 	local orig_key="$LITTLESECRETS_KEY"
 	local orig_user="$LITTLESECRETS_USER"
 	local orig_host="$LITTLESECRETS_HOST"
-	local orig_store="$LITTLESECRETS_STORE"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in

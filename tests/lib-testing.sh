@@ -98,7 +98,7 @@ function test-start {
 		TMPDIR="$ORIGINAL_TMPDIR"
 		export TMPDIR
 	fi
-	TEST_PATH=$(realpath $(mktemp -d -p "$ORIGINAL_PATH" -t tmp.testing.XXX))
+	TEST_PATH="$(realpath $(mktemp -d -p "$ORIGINAL_PATH" -t tmp.testing.XXX))"
 	TMPDIR="$TEST_PATH"
 	export TMPDIR
 	TEST_NAME="${1:-$TEST_NAME}"
@@ -184,36 +184,36 @@ function test-run {
 	if [ "$STATUS" == 0 ]; then
 		test-ok
 	else
-		test-error "Command failed [$STATUS]: $@"
+		test-error "Command failed [$STATUS]: $*"
 		test-output "$OUT"
 		test-abort
 	fi
 }
 
 function test-abort {
-	echo "$@" >&2
+	echo "$*" >&2
 	TEST_LOG+=("☇")
 	TEST_ERRORS+=($(test-id))
 	test-cleanup
 }
 
 function test-ok {
-	if [ -n "$@" ]; then
-		echo "$(test-prefix)${GREEN}   ✓ ${RESET}${DIM}$@${RESET}" >&2
+	if [ -n "$*" ]; then
+		echo "$(test-prefix)${GREEN}   ✓ ${RESET}${DIM}$*${RESET}" >&2
 	fi
 	TEST_LOG+=("✓${TEST_CURRENT}")
 }
 
 function test-fail {
 	if [ -n "${1:-}" ]; then
-		echo "$(test-prefix)${RED} !!! FAIL $@${RESET}" >&2
+		echo "$(test-prefix)${RED} !!! FAIL $*${RESET}" >&2
 	fi
 	TEST_LOG+=("×")
 	TEST_ERRORS+=($(test-id))
 }
 
 function test-err {
-	echo "$@" >&2
+	echo "$*" >&2
 	TEST_LOG+=("×")
 	TEST_ERRORS+=($(test-id))
 }
@@ -250,7 +250,7 @@ function test-cleanup {
 	if [ "$tn" == 0 ]; then
 		echo "${BLUE}[$TEST_NAME] ${GREEN}${BOLD}EOK (0/0)${RESET}" >&2
 	elif [ ${#TEST_ERRORS[@]} -eq 0 ]; then
-		echo "${BLUE}[$TEST_NAME] ${GREEN}${BOLD}EOK${RESET}${GREEN} ($sn/$tn) $((100 * sn / tn))%: ${TEST_LOG[@]}${RESET}" >&2
+		echo "${BLUE}[$TEST_NAME] ${GREEN}${BOLD}EOK${RESET}${GREEN} ($sn/$tn) $((100 * sn / tn))%: ${TEST_LOG[*]}${RESET}" >&2
 		return 0
 	else
 		echo "${BLUE}[$TEST_NAME] ${RED}FAIL  ${BOLD}${TEST_ERRORS[@]}${RESET}" >&2
@@ -278,7 +278,7 @@ function test-xxx() {
 		exit 1
 	fi
 	TEST_CLEAN+=("${tmp}")
-	test-log "TEMP ${TEST_CLEAN[@]} ${tmp}"
+	test-log "TEMP ${TEST_CLEAN[*]} ${tmp}"
 	echo "${tmp}"
 }
 

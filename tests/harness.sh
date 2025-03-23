@@ -2,7 +2,7 @@
 set -euo pipefail
 # FIXME: It's really not lcear what passed/failed
 BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-source "$(dirname "$(dirname $(realpath "${BASH_SOURCE[0]}"))")"/tests/lib-testing.sh
+source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"/tests/lib-testing.sh
 test-start
 for TEST in $BASE/*.*; do
 	case $TEST in
