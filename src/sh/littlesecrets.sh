@@ -4,6 +4,8 @@
 # | | | __| __| |/ _ \ \ / _ \/ __| '__/ _ \ __/ __|
 # | | | |_| |_| |  __/\ \  __/ (__| | |  __/ |_\__ \
 # |_|_|\__|\__|_|\___\__/\___|\___|_|  \___|\__|___/
+#
+# (c) LittleWorshop Ltd, 2025, BSD 3-Clause License
 
 # TODO: We should never check if the key a path by using -f, this will leak the key to the OS
 
@@ -12,6 +14,8 @@
 # the shell and simple tools.
 
 set -euo pipefail
+shopt -s extglob
+
 # --
 # We define the main internal variables
 declare -a LS_CLEANUP=()
@@ -100,7 +104,7 @@ export RESET
 # -----------------------------------------------------------------------------
 
 function ls_log_action {
-	echo " → $@" >&2
+	echo " → $*" >&2
 	return 0
 }
 
@@ -150,7 +154,7 @@ function ls_log_stack {
 
 function ls_on_error {
 	echo >&2 "${RED} ⚠  ERR Command failed $?: !! ${RESET}"
-	ls_log_stack
+	ls_log_stack 5
 	exit 1
 }
 
@@ -164,7 +168,8 @@ function ls_on_error {
 # Secure creation of a file that will be cleaned up, OK to store secrets
 # and keys.
 function ls_mkstemp {
-	local res=$(mktemp)
+	local res
+	res="$(mktemp)"
 	chmod 600 "$res"
 	LS_CLEANUP+=("$res")
 	# If there's a second argument, that's going to be the contents, previously
@@ -205,7 +210,8 @@ function ls_find {
 
 function ls_mkparent {
 	for path in "$@"; do
-		local parent="$(dirname "$path")"
+		local parent
+		parent="$(dirname "$path")"
 		if [ -z "$parent" ]; then
 			parent=
 		elif [ ! -e "$parent" ]; then
@@ -265,8 +271,9 @@ function ls_match { # TEXT EXPR…
 		echo "$text"
 		return 0
 	else
+		# FIXME: This does not seem to work with globs
 		for pattern in "$@"; do
-			if [[ "$text" == "$pattern" ]]; then
+			if [[ "$text" == $pattern ]]; then
 				echo "$text"
 				return 0
 			fi
@@ -276,7 +283,8 @@ function ls_match { # TEXT EXPR…
 }
 
 function ls_match_item {
-	local store=$(ls_store)
+	local store
+	store="$(ls_store)"
 	local item=
 	local path="$1"
 	shift
@@ -1102,6 +1110,7 @@ function ls_secret_grant { # SECRET USER_EXPR
 
 	# Get list of matching secrets
 	local matching_secrets=()
+
 	for s in $(ls_secret_list "$secret_pattern"); do
 		matching_secrets+=("$s")
 	done
@@ -1113,7 +1122,8 @@ function ls_secret_grant { # SECRET USER_EXPR
 
 	# Process each matching secret
 	for secret in "${matching_secrets[@]}"; do
-		local secret_key=$(ls_secret_key "$secret")
+		local secret_key
+		secret_key=$(ls_secret_key "$secret")
 		if [ "$?" != 0 ]; then
 			ls_log_warning "Could not retrieve key for secret: $secret"
 			continue
@@ -1127,7 +1137,8 @@ function ls_secret_grant { # SECRET USER_EXPR
 			if [[ "$user_expr" == *@* ]]; then
 				# If user@host format, grant only to that specific host
 				local host="${user_expr#*@}"
-				local user_pubkey=$(ls_user_pubkey "$user_expr")
+				local user_pubkey
+				user_pubkey=$(ls_user_pubkey "$user_expr")
 				if [ -n "$user_pubkey" ]; then
 					local secret_key_path="$store/secret/$secret/$user@$host.key"
 					ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
@@ -1135,7 +1146,8 @@ function ls_secret_grant { # SECRET USER_EXPR
 			else
 				# Otherwise grant to all host keys for the user
 				for pubkey_path in $(ls_user_list_keys "$user"); do
-					local key_host=$(basename "$pubkey_path" .pubkey)
+					local key_host
+					key_host=$(basename "$pubkey_path" .pubkey)
 					local secret_key_path="$store/secret/$secret/$user@$key_host.key"
 					ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
 				done
@@ -1225,7 +1237,7 @@ function ls_secret_export {
 			if [ "$env" == "$secname" ]; then
 				env="$(echo "${env//./_}" | tr 'a-z' 'A-Z')"
 			fi
-			echo "export $env=$(ls_secret_get "$secname")"
+			echo "export $env='$(ls_secret_get "$secname")'"
 		done
 	fi
 }
@@ -1403,8 +1415,11 @@ function ls_cli {
 		;;
 	## grant <name> <expr...> Grant access to users matching expr
 	"grant")
-		if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
-			ls_log_error "grant: Missing secret name or user pattern"
+		if [ -z "${1:-}" ]; then
+			ls_log_error "grant: Missing secret name, expecting SECRETS USER"
+			return 1
+		elif [ -z "${2:-}" ]; then
+			ls_log_error "grant: Missing user name, expecting SECRET USER"
 			return 1
 		fi
 		ls_secret_grant "$1" "${@:2}"
