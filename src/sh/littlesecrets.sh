@@ -1301,7 +1301,7 @@ function ls_cli {
 		echo "  -s, --store PATH  Set store path"
 		echo ""
 		echo "Commands:"
-		grep '^[[:space:]]*##' "$0" | sed 's/^[[:space:]]*## \?/  /g'
+		grep  '^[[:space:]]##[[:space:]]' "$0" | sed  's/^[[:space:]]*##[[:space:]]//'
 		return 0
 		;;
 	## version           Show version information
