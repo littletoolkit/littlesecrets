@@ -5,21 +5,58 @@
 
 set -euo pipefail
 
+# We'll be changing path on a regular basis, so we keep track of it
+FILENAME="$(basename "$0")"
 ORIGINAL_PATH="$PWD"
 ORIGINAL_TMPDIR="${TMPDIR:-/tmp}"
 BASE_PATH="$(dirname "$(dirname "$(readlink -f "$0")")")"
-TEST_NAME="$(basename "$0" | cut -d. -f1)"
+
+# Variable: TEST_NAME
+# Keeps track of the current test
+TEST_NAME=""
+
+# Variable: TEST_STEP_NAME
+# Keeps track of the current test step
+TEST_STEP_NAME=""
+
+# Variable: TEST_PATH
+# Keeps track of the current test path
 TEST_PATH=""
+
+# Variable: TEST_ERRORS[]
+# Keeps track of the errors for the current test
 declare -a TEST_ERRORS=()
+
+# Variable: TEST_OKS[]
+# Keeps track of the oks for the current test
+declare -a TEST_OKS=()
+
+# Variable: TEST_LOG[]
+# Keeps track of the steps and their status
 declare -a TEST_LOG=()
+
+# Variable: TEST_CLEAN[]
+# Keeps track of the files to clean
 declare -a TEST_CLEAN=()
+
 TEST_CLEAN+=("")
+
+# Variable: TEST_COUNT
+# Counts the number of tests started
 TEST_COUNT=0
-TEST_CURRENT=0
-TEST_CURRENT_ERRORS=0
+TEST_STEP_COUNT=0
+
+# Variable: TEST_CURRENT
+# Current number for the test
+TEST_CURRENT=""
+TEST_CURRENT_STEP=""
+
+# Variable(internal): TEST_EXPECT_FAILURE
+# Set when the test is expected to fail
+TEST_EXPECT_FAILURE=""
 
 # --
-# Color library
+# ## Color library
 if [ -z "${NOCOLOR:-}" ]; then
 	CYAN="$(tput setaf 33)"
 	BLUE_DK="$(tput setaf 27)"
@@ -78,10 +115,16 @@ export RESET
 # Test data is not public, so we restrict the umask.
 umask 0077
 
+# -----------------------------------------------------------------------------
+#
+# TESTS LIFECYCLE
+#
+# -----------------------------------------------------------------------------
+
 function test-init {
 	test-start "$@"
 	# We ensure the exit is called
-	trap test-cleanup EXIT INT TERM ERR
+	trap test-end EXIT INT TERM ERR
 }
 
 # --
@@ -93,145 +136,90 @@ function test-init {
 # ```
 function test-start {
 	if [ -n "$TEST_PATH" ]; then
-		test-cleanup
-		TEST_PATH=""
-		TMPDIR="$ORIGINAL_TMPDIR"
-		export TMPDIR
+		test-end
 	fi
+	TEST_CURRENT=$TEST_COUNT
+	TEST_CURRENT_STEP=""
 	TEST_PATH="$(realpath $(mktemp -d -p "$ORIGINAL_PATH" -t tmp.testing.XXX))"
 	TMPDIR="$TEST_PATH"
 	export TMPDIR
 	TEST_NAME="${1:-$TEST_NAME}"
+	TEST_NAME="${TEST_NAME:-$FILENAME}"
+	test_log "${BLUE}>>> ${BOLD}${TEST_NAME} ${RESET}${BLUE}${DIM}in '${TEST_PATH}'${RESET}"
 	if [ -z "$TEST_PATH" ] || [ ! -d "$TEST_PATH" ]; then
-		test-error "Path empty or does not exists: '$TEST_PATH'"
+		test_log_error "Path empty or does not exists: '$TEST_PATH'"
+		test_cleanup
 		return 1
 	fi
-	test-log "Starting in: $TEST_PATH"
+	test_log_message "Starting in: $TEST_PATH"
 	cd "$TEST_PATH"
-}
-
-function test-diff {
-	local a=$(mktemp -p "$TEST_PATH" var.XXX)
-	local b=$(mktemp -p "$TEST_PATH" var.XXX)
-	echo "$1" >"$a"
-	echo "$2" >"$b"
-	echo "--- Expected/Retrieved" >&2
-	diff "$a" "$b" >&2
-	echo "---" >&2
-	unlink "$a"
-	unlink "$b"
-}
-
-function test-expect {
-	if [ "$1" != "$2" ]; then
-		test-fail "Output differ" "${3:-}"
-		echo -n "$ORANGE" >&2
-		test-diff "$1" "$2"
-		echo "$RESET" >&2
-	else
-		test-ok "${3:-}"
-	fi
-}
-
-function test-case {
-	test-step "$@"
-}
-
-function test-step {
 	((TEST_COUNT += 1))
-	echo "$(test-prefix)${BLUE} === ${BOLD}$@${RESET}" >&2
+}
 
-	if [ "$TEST_CURRENT" != "$TEST_COUNT" ]; then
-		if [ "$TEST_CURRENT_ERRORS" != "${#TEST_ERRORS[*]}" ]; then
-			local errcount=${#TEST_ERRORS[*]}
-			test-error "FAIL $((errcount - TEST_CURRENT_ERRORS)) error(s)"
+# Function: test-end
+# Ends the current test (see `TEST_PATH`) and outputs a report
+function test-end {
+	local res=0
+	TEST_CURRENT_STEP=""
+	local sn=${#TEST_OKS[@]}
+	local en=${#TEST_ERRORS[@]}
+	local tn=$((sn + en))
+
+	if [ -n "$TEST_CURRENT" ] && [ $tn -gt 0 ]; then
+		COLOR="${BLUE}"
+		if [ "$en" -gt 0 ]; then
+			if [ "$sn" -eq 0 ]; then
+				COLOR="$RED"
+			else
+				COLOR="$ORANGE"
+			fi
 		fi
+		test_log "${COLOR}LOG   (${BOLD}$tn${RESET}${COLOR}=${GREEN}$sn${COLOR}+${RED}$en${COLOR}) ${TEST_LOG[*]}${RESET}"
+		# Detail of errors
+		if [ "$en" != 0 ]; then
+			for err in "${TEST_ERRORS[@]}"; do test_log "${RED}FAIL  ${BLUE}${BOLD}$err"; done
+		fi
+		# Test result
+		if [ "$tn" == 0 ]; then
+			# Empty test
+			test_log "${GREEN}${BOLD}EPASS 100% (0/0)${RESET}"
+			res=0
+		elif [ ${#TEST_ERRORS[@]} -eq 0 ]; then
+			# 100% sucesss
+			test_log "${GREEN}${BOLD}EOK${RESET}${GREEN}  $((100 * sn / tn))% ($sn/$tn)${RESET}"
+			res=0
+		elif [ "$sn" == 0 ]; then
+			# 100% failed
+			test_log "${RED}${BOLD}EFAIL${RESET}${RED} $((100 * sn / tn))% ($en/$tn)${RESET}"
+			res=2
+		else
+			# Partial fail
+			test_log "${RED}${BOLD}EFAIL${RESET}${RED} $((100 * sn / tn))% ($en/$tn)${RESET}"
+			res=1
+		fi
+		if [ "$res" == 0 ]; then
+			test_log "${GREEN}<<< ${BOLD}${DIM}${TEST_NAME}"
+		else
+			test_log "${RED}<<< ${BOLD}${DIM}${TEST_NAME}"
+		fi
+		((TEST_COUNT += 1))
 	fi
-	TEST_CURRENT=$TEST_COUNT
-	TEST_CURRENT_ERRORS="${#TEST_ERRORS[*]}"
+	# We always do a cleanup
+	test_cleanup
+	# And restore
+	unset 'TEST_ERRORS[@]'
+	unset 'TEST_LOG[@]'
+	TEST_CURRENT=""
+	TEST_NAME=""
+	TEST_PATH=""
+	TMPDIR="$ORIGINAL_TMPDIR"
+	export TMPDIR
+	return $res
 }
 
-function test-id {
-	printf "%03d" $TEST_CURRENT
-}
-
-function test-log {
-	echo "$(test-prefix) ... $@" >&2
-}
-
-function test-output {
-	echo "$(test-prefix) >>>" >&2
-	echo "$@" >&2
-	echo "<<<" >&2
-}
-
-function test-info {
-	echo "$(test-prefix)   → $@" >&2
-}
-
-function test-prefix {
-	echo -n "${BLUE}${DIM}[$TEST_NAME] ${BOLD}$(test-id)${RESET}"
-}
-
-function test-error {
-	echo "$(test-prefix)${RED} !!! $@${RESET}" >&2
-}
-
-function test-run {
-	test-log ">>> $@"
-	local OUT="$(eval "$@")"
-	local STATUS="$?"
-	if [ "$STATUS" == 0 ]; then
-		test-ok
-	else
-		test-error "Command failed [$STATUS]: $*"
-		test-output "$OUT"
-		test-abort
-	fi
-}
-
-function test-abort {
-	echo "$*" >&2
-	TEST_LOG+=("☇")
-	TEST_ERRORS+=($(test-id))
-	test-cleanup
-}
-
-function test-ok {
-	if [ -n "$*" ]; then
-		echo "$(test-prefix)${GREEN}   ✓ ${RESET}${DIM}$*${RESET}" >&2
-	fi
-	TEST_LOG+=("✓${TEST_CURRENT}")
-}
-
-function test-fail {
-	if [ -n "${1:-}" ]; then
-		echo "$(test-prefix)${RED} !!! FAIL $*${RESET}" >&2
-	fi
-	TEST_LOG+=("×")
-	TEST_ERRORS+=($(test-id))
-}
-
-function test-err {
-	echo "$*" >&2
-	TEST_LOG+=("×")
-	TEST_ERRORS+=($(test-id))
-}
-
-function test-data {
-	local data_path="$BASE_PATH/tests/data/$1"
-	if [ -n "$1" ] && [ -e "$data_path" ]; then
-		echo -n "$data_path" >&2
-	elif [ -z "$1" ]; then
-		test-err "-!- ERR 'test-data FILENAME' is missing FILENAME argument"
-		exit 1
-	else
-		test-err "!!! ERR Could not find test data: path=$data_path"
-		exit 1
-	fi
-}
-
-function test-cleanup {
+# Function(internal): test_cleanup
+# Peforms a cleanup
+function test_cleanup {
 	if [ -e "$TEST_PATH" ]; then
 		rm -rf "$TEST_PATH"
 	fi
@@ -244,42 +232,166 @@ function test-cleanup {
 			unlink "$path"
 		fi
 	done
-	local sn=${#TEST_LOG[*]}
-	local en=${#TEST_ERRORS[@]}
-	local tn=$((sn + en))
-	if [ "$tn" == 0 ]; then
-		echo "${BLUE}[$TEST_NAME] ${GREEN}${BOLD}EOK (0/0)${RESET}" >&2
-	elif [ ${#TEST_ERRORS[@]} -eq 0 ]; then
-		echo "${BLUE}[$TEST_NAME] ${GREEN}${BOLD}EOK${RESET}${GREEN} ($sn/$tn) $((100 * sn / tn))%: ${TEST_LOG[*]}${RESET}" >&2
-		return 0
-	else
-		echo "${BLUE}[$TEST_NAME] ${RED}FAIL  ${BOLD}${TEST_ERRORS[@]}${RESET}" >&2
-		echo "${BLUE}[$TEST_NAME] ${ORANGE}${BOLD}EFAIL${RESET}${RED} ($en/$tn) $((100 * sn / tn))%${RESET}" >&2
+	# We've cleaned everything
+	unset 'TEST_CLEAN[@]'
+}
+
+# -----------------------------------------------------------------------------
+#
+# TEST STRUCTURE
+#
+# -----------------------------------------------------------------------------
+
+function test-case {
+	test-step "$@"
+}
+
+function test-step {
+	TEST_CURRENT_STEP=$TEST_STEP_COUNT
+	test_log "${BLUE}--→ ${BOLD}$*${RESET}"
+	TEST_STEP_NAME="$*"
+	# FIXME: Not sure about that
+	# if [ "$TEST_CURRENT" != "$TEST_COUNT" ]; then
+	# 	if [ "$TEST_CURRENT_ERRORS" != "${#TEST_ERRORS[*]}" ]; then
+	# 		local errcount=${#TEST_ERRORS[*]}
+	# 		test_log_error "FAIL $((errcount - TEST_CURRENT_ERRORS)) error(s)"
+	# 	fi
+	# fi
+	# TEST_CURRENT_ERRORS="${#TEST_ERRORS[*]}"
+	((TEST_STEP_COUNT += 1))
+}
+
+# -----------------------------------------------------------------------------
+#
+# TEST ACTIONS
+#
+# -----------------------------------------------------------------------------
+
+# Function: test-cmd COMMAND…
+# Runs the command and fails the test if the command fails.
+function test-cmd {
+	if ! "$@"; then
+		test-fail "Subcommand failed [$?]: $*"
 		return 1
+	else
+		return 0
 	fi
 }
 
-function test-xxx() {
-	local prefix="${2:-}"
-	local suffix="${1:-}"
-	local parent="${TEST_PATH:-/tmp}"
-	test-log "TEST PATH $TEST_PATH"
-	local tmp
-	if [[ -n "${prefix}" ]] && [[ -n "${suffix}" ]]; then
-		tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX${suffix}")
-	elif [[ -n "${prefix}" ]]; then
-		tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX")
+# --
+# Function: test-run PREFIX COMMAND…
+# Runs the given command as a test
+function test-run {
+	local exit_code
+	local prefix="$1"
+	shift
+	test_log_message ">>> $*"
+	env -C "$ORIGINAL_PATH" "$SHELL" "$@" 2> >(sed "s/^/${RED}[${prefix}] /" >&2) > >(sed "s/^/${BLUE}${prefix}] /")
+	exit_code=$?
+	if [ $exit_code -eq 0 ]; then
+		test-ok
 	else
-		tmp=$(mktemp)
+		test-fail "Command run failed [$exit_code]: $*"
+	fi
+	return "$exit_code"
+}
+
+function test_log_run {
+	local prefix="$(test_prefix)$1"
+	shift
+	"$@" 2> >(sed "s/^/${RED}${prefix} /" >&2) > >(sed "s/^/${BLUE}${prefix} /")
+	return $?
+}
+
+function test-ok {
+	if [ -n "$*" ]; then
+		test_log_success "$*"
+	fi
+	TEST_LOG+=("✓")
+	TEST_OKS+=($(test_step_id))
+}
+
+function test-fail {
+	test_log_error "FAIL $*"
+	TEST_LOG+=("×")
+	TEST_ERRORS+=("[$(test_step_id)] ×←- ${TEST_STEP_NAME} $*")
+}
+
+# Function: test-fata
+# Fatal error, aborts everything
+function test-fatal {
+	if [ -z "$TEST_EXPECT_FAILURE" ]; then
+		test_log_error "Fatal failure $*"
+		TEST_LOG+=("×")
+		TEST_ERRORS+=("[$(test_step_id)] ×←- ${TEST_STEP_NAME} $*")
+		test-end
+	fi
+}
+
+# Function: test-abort
+# Aborts the entire test, triggering a test end
+function test-abort {
+	if [ -n "${1:-}" ]; then
+		test_log_error "ABRT $*"
+	fi
+	TEST_LOG+=("☇")
+	TEST_ERRORS+=("[$(test_step_id)] ☇←- ${TEST_STEP_NAME} $*")
+	test-end
+}
+
+# -----------------------------------------------------------------------------
+#
+# TEST PREDICATES
+#
+# -----------------------------------------------------------------------------
+
+function test-expect {
+	if [ "$1" != "$2" ]; then
+		test-fail "Output differ" "${3:-}"
+		test-diff "$1" "$2"
+	else
+		test-ok "${3:-}"
+	fi
+}
+
+# Function: test-expect-success COMMAND…
+function test-expect-success {
+	if [ -n "$@" ]; then "$@"; fi
+	if [ $? != 0 ]; then
+		test-fail "Subcommand failed [$?] $*"
+		return $?
+	else
+		test-ok
+		return 0
+	fi
+}
+
+function test-expect-failure {
+	TEST_EXPECT_FAILURE="yes"
+	# Save current errexit state
+	local has_errexit=false
+	if [[ $- == *e* ]]; then
+		has_errexit=true
+		set +e # Disable errexit
 	fi
 
-	if [[ $? -ne 0 ]]; then
-		test-abort "Failed to create temporary file"
-		exit 1
+	test_log "${BLUE}>>> Expected to fail:${DIM} [$(test_fmt_line "$*")]"
+	test_log_run "${ORANGE}${DIM}>>>" "$@"
+	local res="$?"
+
+	if [[ "$has_errexit" == true ]]; then
+		set -e
 	fi
-	TEST_CLEAN+=("${tmp}")
-	test-log "TEMP ${TEST_CLEAN[*]} ${tmp}"
-	echo "${tmp}"
+
+	TEST_EXPECT_FAILURE=""
+	# Check if test failed as expected
+	if [[ $res -ne 0 ]]; then
+		test-ok
+		return 0
+	else
+		test-fail "Command was expected to fail: $*"
+		return 1
+	fi
 }
 
 function test-path {
@@ -312,12 +424,12 @@ function test-contains { # PATH STRING…
 	local path="$1"
 	shift
 	if [ -e "$path" ]; then
-		test-fail "$(test-relpath "$path") does not exist"
+		test-fail "Path $(test-relpath "$path") does not exist"
 		return 1
 	else
 		for expr in "$@"; do
 			if ! grep -q "$expr" "$path"; then
-				test-fail "$(test-relpath "$path") does not contain: $expr"
+				test-fail "Path $(test-relpath "$path") does not contain: $expr"
 				return 1
 			fi
 		done
@@ -328,7 +440,7 @@ function test-contains { # PATH STRING…
 function test-exist {
 	for path in "$@"; do
 		if [ ! -e "$path" ]; then
-			test-fail "path does not exists: $path"
+			test-fail "Path does not exists: $path"
 			return 1
 		else
 			test-ok "$(test-relpath "$path") exists"
@@ -337,7 +449,7 @@ function test-exist {
 	return 0
 }
 
-function test-noempty {
+function test-path-noempty {
 	for path in "$@"; do
 		if [ ! -f "$path" ]; then
 			test-fail "path does not exists: $path"
@@ -350,10 +462,8 @@ function test-noempty {
 }
 
 function test-empty {
-	local name="$1"
-	local value="$2"
-	local failure="$3"
-	test-log "--- TEST $name"
+	local value="$1"
+	local failure="${2:-}"
 	if [ -s "$value" ]; then
 		test-fail "$failure"
 	else
@@ -361,6 +471,150 @@ function test-empty {
 	fi
 }
 
-trap test-cleanup EXIT INT TERM ERR
+function test-noempty {
+	local value="$1"
+	local failure="${2:-}"
+	if [ -z "$value" ]; then
+		test-fail "$failure"
+	else
+		test-ok
+	fi
+}
+function test-data {
+	local data_path="$BASE_PATH/tests/data/$1"
+	if [ -n "$1" ] && [ -e "$data_path" ]; then
+		echo -n "$data_path" >&2
+	elif [ -z "$1" ]; then
+		test-fail "'test-data FILENAME' is missing FILENAME argument"
+		exit 1
+	else
+		test-fail "Could not find test data: path=$data_path"
+		exit 1
+	fi
+}
+
+# -----------------------------------------------------------------------------
+#
+# TEST OUTPUT
+#
+# -----------------------------------------------------------------------------
+
+function test-diff {
+	local a=$(mktemp -p "$TEST_PATH" var.XXX)
+	local b=$(mktemp -p "$TEST_PATH" var.XXX)
+	echo "$1" >"$a"
+	echo "$2" >"$b"
+	test_log "${ORANGE}>>> Expected/Retrieved"
+	test_log_run "${ORANGE}>>>" diff "$a" "$b"
+	test_log "<<<${RESET}"
+	unlink "$a"
+	unlink "$b"
+}
+
+function test-output {
+	echo ">>>" >&2
+	echo "$@" >&2
+	echo "<<<" >&2
+}
+
+function test-info {
+	echo " → $*" >&2
+}
+
+# Function(internal): test_fmt_line STR MAXLEN
+function test_fmt_line {
+	local str="$1"
+	str=$(echo "$str" | tr '\n' '\\n')
+	local max_len="${2:-80}"
+	if [ ${#str} -gt "$max_len" ]; then
+		echo "${str:0:$max_len}…"
+	else
+		echo "$str"
+	fi
+}
+
+# -----------------------------------------------------------------------------
+#
+# TEST ATTRIBUTES
+#
+# -----------------------------------------------------------------------------
+
+function test_id {
+	printf "%03d" $TEST_CURRENT
+}
+
+function test_step_id {
+	printf "%03d.%03d" "$TEST_CURRENT" "$TEST_CURRENT_STEP"
+}
+
+function test_prefix {
+	local prefix
+	if [ -z "${TEST_CURRENT}" ]; then
+		prefix="-"
+	elif [ -z "${TEST_CURRENT_STEP}" ]; then
+		prefix=$(test_id)
+	else
+		prefix=$(test_step_id)
+	fi
+	echo -n "${BLUE}${DIM}[${TEST_NAME:-$FILENAME}:${BOLD}${RESET}${BLUE}$prefix${RESET}${DIM}${BLUE}] ${RESET}"
+
+}
+
+# -----------------------------------------------------------------------------
+#
+# TEST LOGGING
+#
+# -----------------------------------------------------------------------------
+
+function test_log {
+	echo "$(test_prefix)$@${RESET}" >&2
+}
+
+function test_log_message {
+	test_log "${BLUE}... ${DIM}$@"
+}
+
+function test_log_success {
+	test_log "${GREEN} ✓  ${RESET}${DIM}$*"
+}
+
+function test_log_error {
+	test_log "${RED}!!! $@"
+}
+
+function test_signal_err {
+	test_log_error "XXX SIGNAL ERROR"
+}
+
+function test_signal_exit {
+	test-end
+}
+
+# FIXME: What is this?
+function test-xxx() {
+	local prefix="${2:-}"
+	local suffix="${1:-}"
+	local parent="${TEST_PATH:-/tmp}"
+	test_log_message "TEST PATH $TEST_PATH"
+	local tmp
+	if [[ -n "${prefix}" ]] && [[ -n "${suffix}" ]]; then
+		tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX${suffix}")
+	elif [[ -n "${prefix}" ]]; then
+		tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX")
+	else
+		tmp=$(mktemp)
+	fi
+
+	if [[ $? -ne 0 ]]; then
+		test-abort "Failed to create temporary file"
+		exit 1
+	fi
+	TEST_CLEAN+=("${tmp}")
+	test_log_message "TEMP ${TEST_CLEAN[*]} ${tmp}"
+	echo "${tmp}"
+}
+
+trap test_signal_err ERR
+trap test_signal_exit EXIT INT TERM
 
 # EOF

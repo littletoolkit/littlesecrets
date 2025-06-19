@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"/src/sh/littlesecrets.sh
-source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"/tests/lib-testing.sh
+BASE="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
+source "$BASE/src/sh/littlesecrets.sh"
+source "$BASE/tests/lib-testing.sh"
 
 # --
 # Tests add/get secrets
@@ -11,9 +12,10 @@ test-start
 # First step is to add/retrieve a secret
 SECRET="Hello, World $(date)!"
 test-step "Add secret"
-ls_store_init
-echo -n "$SECRET" | ls_secret_add hello.world
+ls_store_init || test-fail
+
 test-step "Ensures the secret files are there"
+echo -n "$SECRET" | ls_secret_add hello.world || test-fail
 test-exist .littlesecrets/secret/hello.world/secret.enc
 test-exist .littlesecrets/secret/hello.world/"$USER"@"$HOSTNAME".key
 test-step "Ensures the user has a public key"
@@ -26,16 +28,10 @@ test-expect "$(ls_secret_get hello.world)" "$SECRET"
 # --
 # Second step is to generate a new private key, and make sure
 # we can't decrypt the secet
-test-info "Fails to retrieve secret with new private key"
 test-step "Generation of a new private key"
-PRIVKEY=$(ls_privkey_new)
-test-info "Next command expected to fail"
-if ls_secret_get hello.world "$PRIVKEY"; then
-	test-fail "Should not decode secret"
-else
-	test-ok
-fi
+PRIVKEY=$(test-expect-success ls_privkey_new)
 
-test-cleanup
+test-step "Next command expected to fail"
+test-expect-failure ls_secret_get hello.world "$PRIVKEY"
 
 # EOF
