@@ -43,8 +43,8 @@ TEST_CLEAN+=("")
 
 # Variable: TEST_COUNT
 # Counts the number of tests started
-TEST_COUNT=0
-TEST_STEP_COUNT=0
+TEST_COUNT=${TEST_COUNT:-0}
+TEST_STEP_COUNT=${TEST_STEP_COUNT:-0}
 
 # Variable: TEST_CURRENT
 # Current number for the test
@@ -138,6 +138,7 @@ function test-start {
 	if [ -n "$TEST_PATH" ]; then
 		test-end
 	fi
+	((TEST_COUNT += 1))
 	TEST_CURRENT=$TEST_COUNT
 	TEST_CURRENT_STEP=""
 	TEST_PATH="$(realpath $(mktemp -d -p "$ORIGINAL_PATH" -t tmp.testing.XXX))"
@@ -145,15 +146,14 @@ function test-start {
 	export TMPDIR
 	TEST_NAME="${1:-$TEST_NAME}"
 	TEST_NAME="${TEST_NAME:-$FILENAME}"
-	test_log "${BLUE}>>> ${BOLD}${TEST_NAME} ${RESET}${BLUE}${DIM}in '${TEST_PATH}'${RESET}"
+	test_log "${BLUE}>>> ${YELLOW}${BOLD}${TEST_NAME} ${RESET}${BLUE}${DIM}in '${TEST_PATH}'${RESET}"
 	if [ -z "$TEST_PATH" ] || [ ! -d "$TEST_PATH" ]; then
 		test_log_error "Path empty or does not exists: '$TEST_PATH'"
 		test_cleanup
 		return 1
 	fi
-	test_log_message "Starting in: $TEST_PATH"
 	cd "$TEST_PATH"
-	((TEST_COUNT += 1))
+	export TEXT_COUNT
 }
 
 # Function: test-end
@@ -202,7 +202,6 @@ function test-end {
 		else
 			test_log "${RED}<<< ${BOLD}${DIM}${TEST_NAME}"
 		fi
-		((TEST_COUNT += 1))
 	fi
 	# We always do a cleanup
 	test_cleanup
@@ -247,6 +246,7 @@ function test-case {
 }
 
 function test-step {
+	((TEST_STEP_COUNT += 1))
 	TEST_CURRENT_STEP=$TEST_STEP_COUNT
 	test_log "${BLUE}--→ ${BOLD}$*${RESET}"
 	TEST_STEP_NAME="$*"
@@ -258,7 +258,6 @@ function test-step {
 	# 	fi
 	# fi
 	# TEST_CURRENT_ERRORS="${#TEST_ERRORS[*]}"
-	((TEST_STEP_COUNT += 1))
 }
 
 # -----------------------------------------------------------------------------
@@ -285,15 +284,12 @@ function test-run {
 	local exit_code
 	local prefix="$1"
 	shift
-	test_log_message ">>> $*"
-	env -C "$ORIGINAL_PATH" "$SHELL" "$@" 2> >(sed "s/^/${RED}[${prefix}] /" >&2) > >(sed "s/^/${BLUE}${prefix}] /")
-	exit_code=$?
-	if [ $exit_code -eq 0 ]; then
-		test-ok
-	else
-		test-fail "Command run failed [$exit_code]: $*"
-	fi
-	return "$exit_code"
+	TEST_CURRENT_STEP=$TEST_STEP_COUNT
+	TEST_STEP_NAME="$*"
+	((TEST_STEP_COUNT += 1))
+	test_log "${BLUE}=== ${YELLOW}${BOLD}$* ${RESET}${BLUE}${DIM}in '${ORIGINAL_PATH}'${RESET}"
+	env -C "$ORIGINAL_PATH" "$SHELL" "$@" 2> >(sed "s/^/${RESET}${prefix} . ${GRAY}/" >&2) > >(sed "s/^/${RESET}${prefix} ! ${ORANGE}/")
+	return $?
 }
 
 function test_log_run {
@@ -307,13 +303,13 @@ function test-ok {
 	if [ -n "$*" ]; then
 		test_log_success "$*"
 	fi
-	TEST_LOG+=("✓")
+	TEST_LOG+=("${GREEN}✓")
 	TEST_OKS+=($(test_step_id))
 }
 
 function test-fail {
 	test_log_error "FAIL $*"
-	TEST_LOG+=("×")
+	TEST_LOG+=("${RED}×")
 	TEST_ERRORS+=("[$(test_step_id)] ×←- ${TEST_STEP_NAME} $*")
 }
 
@@ -322,7 +318,7 @@ function test-fail {
 function test-fatal {
 	if [ -z "$TEST_EXPECT_FAILURE" ]; then
 		test_log_error "Fatal failure $*"
-		TEST_LOG+=("×")
+		TEST_LOG+=("${RED}×")
 		TEST_ERRORS+=("[$(test_step_id)] ×←- ${TEST_STEP_NAME} $*")
 		test-end
 	fi
@@ -334,7 +330,7 @@ function test-abort {
 	if [ -n "${1:-}" ]; then
 		test_log_error "ABRT $*"
 	fi
-	TEST_LOG+=("☇")
+	TEST_LOG+=("${ORANGE}☇")
 	TEST_ERRORS+=("[$(test_step_id)] ☇←- ${TEST_STEP_NAME} $*")
 	test-end
 }
@@ -347,8 +343,16 @@ function test-abort {
 
 function test-expect {
 	if [ "$1" != "$2" ]; then
-		test-fail "Output differ" "${3:-}"
+		test-fail "Expected output differ" "${3:-}"
 		test-diff "$1" "$2"
+	else
+		test-ok "${3:-}"
+	fi
+}
+
+function test-expect-different {
+	if [ "$1" == "$2" ]; then
+		test-fail "Expected output identical" "$(test_fmt_line "$1")"
 	else
 		test-ok "${3:-}"
 	fi
@@ -356,10 +360,14 @@ function test-expect {
 
 # Function: test-expect-success COMMAND…
 function test-expect-success {
-	if [ -n "$@" ]; then "$@"; fi
-	if [ $? != 0 ]; then
-		test-fail "Subcommand failed [$?] $*"
-		return $?
+	local exit_code=$?
+	if [ -n "$*" ]; then
+		"$@"
+		exit_code=$?
+	fi
+	if [ $exit_code != 0 ]; then
+		test-fail "Subcommand failed [$exit_code] $*"
+		return $exit_code
 	else
 		test-ok
 		return 0
@@ -377,7 +385,7 @@ function test-expect-failure {
 
 	test_log "${BLUE}>>> Expected to fail:${DIM} [$(test_fmt_line "$*")]"
 	test_log_run "${ORANGE}${DIM}>>>" "$@"
-	local res="$?"
+	local res=$?
 
 	if [[ "$has_errexit" == true ]]; then
 		set -e
@@ -389,7 +397,7 @@ function test-expect-failure {
 		test-ok
 		return 0
 	else
-		test-fail "Command was expected to fail: $*"
+		test-fail "Command was expected to fail got [$res]:${DIM} [$(test_fmt_line "$*")"
 		return 1
 	fi
 }
@@ -438,14 +446,14 @@ function test-contains { # PATH STRING…
 }
 
 function test-exist {
-	for path in "$@"; do
-		if [ ! -e "$path" ]; then
-			test-fail "Path does not exists: $path"
-			return 1
-		else
-			test-ok "$(test-relpath "$path") exists"
-		fi
-	done
+	if [ ! -e "$1" ]; then
+		test-fail "Path does not exists: $1"
+		return 1
+	elif [ -n "${2:-}" ]; then
+		test-ok "$2: $(test-relpath "$1")"
+	else
+		test-ok "$(test-relpath "$1") exists"
+	fi
 	return 0
 }
 
@@ -500,15 +508,22 @@ function test-data {
 # -----------------------------------------------------------------------------
 
 function test-diff {
-	local a=$(mktemp -p "$TEST_PATH" var.XXX)
-	local b=$(mktemp -p "$TEST_PATH" var.XXX)
-	echo "$1" >"$a"
-	echo "$2" >"$b"
-	test_log "${ORANGE}>>> Expected/Retrieved"
-	test_log_run "${ORANGE}>>>" diff "$a" "$b"
-	test_log "<<<${RESET}"
-	unlink "$a"
-	unlink "$b"
+	if [ "$1" != "$2" ]; then
+		local a=$(mktemp -p "$TEST_PATH" var.XXX)
+		local b=$(mktemp -p "$TEST_PATH" var.XXX)
+		echo "$1" >"$a"
+		echo "$2" >"$b"
+		test_log "${ORANGE}>>> Expected/Retrieved"
+		test_log "${ORANGE}A:[${RESET}$1${ORANGE}] $(openssl sha256 "$a" | cut -d' ' -f2)"
+		test_log "${ORANGE}B:[${RESET}$2${ORANGE}] $(openssl sha256 "$b" | cut -d' ' -f2)"
+		test_log_run "${ORANGE}>>>" diff -u "$a" "$b"
+		test_log "<<<${RESET}"
+		# XXX
+		cp "$a" ~/Desktop/a.txt
+		cp "$b" ~/Desktop/b.txt
+		unlink "$a"
+		unlink "$b"
+	fi
 }
 
 function test-output {
@@ -540,7 +555,7 @@ function test_fmt_line {
 # -----------------------------------------------------------------------------
 
 function test_id {
-	printf "%03d" $TEST_CURRENT
+	printf "%03d" "$TEST_CURRENT"
 }
 
 function test_step_id {
@@ -560,6 +575,10 @@ function test_prefix {
 
 }
 
+function test_nocolor {
+	sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/[\x00-\x1f\x7f]//g'
+
+}
 # -----------------------------------------------------------------------------
 #
 # TEST LOGGING
@@ -567,7 +586,11 @@ function test_prefix {
 # -----------------------------------------------------------------------------
 
 function test_log {
-	echo "$(test_prefix)$@${RESET}" >&2
+	echo "${RESET}$(test_prefix)$*${RESET}" >&2
+}
+
+function test_log_separator {
+	test_log "${DIM}―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――"
 }
 
 function test_log_message {
@@ -583,7 +606,7 @@ function test_log_error {
 }
 
 function test_signal_err {
-	test_log_error "XXX SIGNAL ERROR"
+	test_log "${RED}-!- Unmanaged error [$?] $@"
 }
 
 function test_signal_exit {

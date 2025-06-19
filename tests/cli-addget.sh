@@ -11,18 +11,20 @@ test-start
 # --
 # First step is to add/retrieve a secret
 SECRET="Hello, World $(date)!"
-test-step "Add secret"
-ls_store_init || test-fail
+
+test-step "Init store"
+ls_store_init || test-fail "Could not init store"
 
 test-step "Ensures the secret files are there"
-echo -n "$SECRET" | ls_secret_add hello.world || test-fail
+echo -n "$SECRET" | ls_secret_add hello.world || test-fail "Could not add secret"
 test-exist .littlesecrets/secret/hello.world/secret.enc
 test-exist .littlesecrets/secret/hello.world/"$USER"@"$HOSTNAME".key
+
 test-step "Ensures the user has a public key"
 test-exist .littlesecrets/user/"$USER"/"$HOSTNAME".pubkey
 
 test-step "Retrieve secret"
-test-expect "$(ls_secret_list | grep hello.world)" "hello.world"
+test-expect "$(ls_secret_list | grep hello.world | test_nocolor)" "hello.world"
 test-expect "$(ls_secret_get hello.world)" "$SECRET"
 
 # --
@@ -33,5 +35,6 @@ PRIVKEY=$(test-expect-success ls_privkey_new)
 
 test-step "Next command expected to fail"
 test-expect-failure ls_secret_get hello.world "$PRIVKEY"
+test-expect-different "$(ls_secret_get hello.world "$PRIVKEY")" "$SECRET" "Cannot retrieve secret"
 
 # EOF

@@ -17,8 +17,7 @@ test-ok
 test-substring "$(cat ".littlesecrets/user/$USER/$HOSTNAME.pubkey")" "BEGIN PUBLIC KEY"
 
 test-case "Generate a keypair for alice@machine"
-ssh-keygen -t rsa -b 4096 -f alice.rsa -P ""
-sed -i "s|$USER@$HOSTNAME|alice@machine|g" alice.rsa.pub
+ssh-keygen -t rsa -b 4096 -f alice.rsa -P "" -C alice@machine
 
 test-case "Validate that the user host can be extracted from the key"
 test-expect "$(ls_user_name '' alice.rsa.pub)" "alice" "Public key user name extraction"
@@ -29,25 +28,25 @@ littlesecrets register alice alice.rsa.pub
 test-noempty ".littlesecrets/user/alice/machine.pubkey"
 test-substring "$(cat ".littlesecrets/user/alice/machine.pubkey")" "BEGIN PUBLIC KEY"
 
-# # Test registering with user@host format
-# test-case "Register with user@host"
-# littlesecrets register bob@laptop
-# test-ok
-# test-noempty ".littlesecrets/user/bob/laptop.pubkey"
-#
-# # Test registering with --user and --host options
-# test-case "Register with --user and --host options"
-# littlesecrets --user carol --host desktop register
-# test-ok
-# test-noempty ".littlesecrets/user/carol/desktop.pubkey"
-#
-# # Test registering with explicit key file
-# test-case "Register with explicit key file"
-# ssh-keygen -t rsa -N "" -f "test-key"
-# littlesecrets register dave@server test-key.pub
-# test-ok
-# test-noempty ".littlesecrets/user/dave/server.pubkey"
-# rm -f "test-key" "test_key.pub"
+# Test registering with user@host format
+test-case "Register with user@host"
+littlesecrets register bob@laptop
+test-ok "User bob registered"
+test-noempty ".littlesecrets/user/bob/laptop.pubkey" "Bob key present"
+
+# Test registering with --user and --host options
+test-case "Register with --user and --host options"
+littlesecrets --user carol --host desktop register
+test-ok "User carol regsitered"
+test-noempty ".littlesecrets/user/carol/desktop.pubkey" "Carol key present"
+
+# Test registering with explicit key file
+test-case "Register with explicit key file"
+ssh-keygen -t rsa -N "" -f "test-key" -C dave@server
+littlesecrets register dave@server test-key.pub
+test-ok "User dave registered"
+test-noempty ".littlesecrets/user/dave/server.pubkey" "Dave key present"
+rm -f "test-key" "test_key.pub"
 #
 # # Test registering with --key option
 # test-case "Register with --key option"
@@ -77,6 +76,5 @@ test-substring "$(cat ".littlesecrets/user/alice/machine.pubkey")" "BEGIN PUBLIC
 # test-assert_failure
 
 # Cleanup
-test-cleanup
 
 # EOF

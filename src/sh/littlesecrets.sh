@@ -153,8 +153,12 @@ function ls_log_stack {
 }
 
 function ls_on_error {
-	echo >&2 "${RED} ⚠  ERR Command failed $?: !! ${RESET}"
+	echo >&2 "${RED} ⚠  ERR LittleSecrets Command failed $?: !! ${RESET}"
 	ls_log_stack 5
+	if [ -n "${LS_TRAP_ERROR_PREVIOUS}" ]; then
+		eval "$LS_TRAP_ERROR_PREVIOUS"
+	fi
+
 	exit 1
 }
 
@@ -251,6 +255,9 @@ function ls_cleanup {
 			unlink "$path"
 		fi
 	done
+	if [ -n "${LS_TRAP_PREVIOUS}" ]; then
+		eval "$LS_TRAP_PREVIOUS"
+	fi
 }
 
 function ls_ispath { ## PATHLIKE
@@ -620,22 +627,28 @@ function ls_key {
 # --
 function ls_encrypt_sym { # KEY
 	local key_path=$(ls_mkstemp "$1")
+	local res=0
 	ls_log_output_start
 	if ! openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
-		ls_log_error "ls_encrypt_sym: Could not encrypt secret"
+		res=1
+		ls_log_error "ls_encrypt_sym: Could not encrypt secret [$?]"
 	fi
 	ls_log_output_end
 	unlink "$key_path"
+	return $res
 }
 
 # --
 # Generates the signature for the given key
 function ls_hmac { # KEY
+	local res=0
 	ls_log_output_start
 	if ! openssl dgst -sha256 -hmac "$1" | cut -d' ' -f2; then
-		ls_log_error "ls_hmac: Could not generate secret HMAC"
+		res=1
+		ls_log_error "ls_hmac: Could not generate secret HMAC [$?]"
 	fi
 	ls_log_output_end
+	return $res
 }
 
 # --
@@ -647,12 +660,12 @@ function ls_decrypt_sym { # KEY
 	local key_path="$(ls_mkstemp "$1")"
 	ls_log_output_start
 	if ! openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
-		ls_log_error "ls_decrypt_sym: Could not decrypt secret"
 		res=1
+		ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$?]"
 	fi
 	ls_log_output_end
 	ls_unlink "$key_path"
-	return "$res"
+	return $res
 }
 
 # --
@@ -664,6 +677,7 @@ function ls_encrypt_asym { # PUBKEY? PATH?
 	local secret_path="${2:-/dev/stdin}"
 	local pubkey_path=
 	local pubkey_temp=0
+	local res=0
 	if [ -z "$pubkey" ]; then
 		pubkey_path="$(ls_pubkey_path)"
 	elif [ -e "$pubkey" ]; then
@@ -674,12 +688,14 @@ function ls_encrypt_asym { # PUBKEY? PATH?
 	fi
 	ls_log_output_start
 	if ! openssl pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out /dev/stdout; then
-		ls_log_error "ls_encrypt_asym: Could not encrypt secret"
+		res=1
+		ls_log_error "ls_encrypt_asym: Could not asymmetrically encrypt secret"
 	fi
 	ls_log_output_end
 	if [ "$pubkey_temp" == 1 ]; then
 		unlink "$pubkey_path"
 	fi
+	return $res
 }
 
 # --
@@ -691,6 +707,7 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	local secret_path="${2:-/dev/stdin}"
 	local privkey_path=
 	local privkey_temp=0
+	local res=0
 	if [ -z "$privkey" ]; then
 		privkey_path="$(ls_privkey_path)"
 	elif [ -e "$privkey" ]; then
@@ -701,12 +718,14 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	fi
 	ls_log_output_start
 	if ! openssl pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out /dev/stdout; then
-		ls_log_error "ls_decrypt_asym: Could not decrypt secret"
+		res=$1
+		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$?]"
 	fi
 	ls_log_output_end
 	if [ "$privkey_temp" == 1 ]; then
 		unlink "$privkey_path"
 	fi
+	return "$res"
 }
 
 # -----------------------------------------------------------------------------
@@ -1055,24 +1074,35 @@ function ls_secret_hmac_path { #SECRET
 function ls_secret_get { # NAME PRIVKEY?
 	# We locate the secret
 	local secret="$1"
-	local store="$(ls_store)"
+	local store
+	store="$(ls_store)"
 	local secret_path="$store/secret/$secret/secret.enc"
 	if [ ! -e "$secret_path" ]; then return 0; fi
 
 	# First step, we decrypt the secret key with the user's private key
-	local user=$(ls_user_name)
-	local host=$(ls_user_host)
-	local user_privkey=$(ls_user_privkey "${2:-}" | ls_decode)
+	local user
+	user=$(ls_user_name)
+	local host
+	host=$(ls_user_host)
+	local user_privkey
+	user_privkey=$(ls_user_privkey "${2:-}" | ls_decode)
 	local secret_key_path="$store/secret/$secret/$user@$host.key"
 	if [ ! -e "$secret_key_path" ]; then return 0; fi
-	local secret_key=$(ls_decrypt_asym "$user_privkey" <"$secret_key_path")
-
+	local secret_key
+	if ! secret_key=$(ls_decrypt_asym "$user_privkey" <"$secret_key_path"); then
+		return 1
+	fi
+	if [ -z "$secret_key" ]; then
+		return 1
+	fi
 	# Second step, we decrypt the secret with
 	local secret
-	secret="$(ls_decrypt_sym "$secret_key" <"$secret_path")"
-	local res="$?"
-	echo "$secret"
-	return "$res"
+	if secret="$(ls_decrypt_sym "$secret_key" <"$secret_path")"; then
+		echo -n "$secret"
+		return 0
+	else
+		return 1
+	fi
 }
 
 function ls_secret_verify { # NAME PRIVEY?
@@ -1313,7 +1343,7 @@ function ls_cli {
 		echo "  -s, --store PATH  Set store path"
 		echo ""
 		echo "Commands:"
-		grep  '^[[:space:]]##[[:space:]]' "$0" | sed  's/^[[:space:]]*##[[:space:]]//'
+		grep '^[[:space:]]##[[:space:]]' "$0" | sed 's/^[[:space:]]*##[[:space:]]//'
 		return 0
 		;;
 	## version           Show version information
@@ -1480,12 +1510,15 @@ function ls_cli {
 #
 # -----------------------------------------------------------------------------
 
+LS_TRAP_PREVIOUS="$(trap -p EXIT INT TERM | cut -d"'" -f2 | sort | uniq)"
+LS_TRAP_ERROR_PREVIOUS=""
 trap ls_cleanup EXIT INT TERM
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 	ls_cli "$@"
 else
 	# We only register error handling in library mode
+	LS_TRAP_ERROR_PREVIOUS="$(trap -p ERR | cut -d"'" -f2 | sort | uniq)"
 	trap ls_on_error ERR
 fi
 

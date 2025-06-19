@@ -69,22 +69,25 @@ work for you, then its simplicity and ease of use should make it attractive.
 
 - *Revocation mechanisms*: secrets can be revoked and rotated.
 
-- *Strong Encryption*: symmetric encryption is AES-256-CBC with PBKDF2
+- *Strong Encryption*: symmetric encryption is AES-256-CBC with PBKDF2,
+  authentication using HMAC.
 
 - *Stateless Design*: no service or authentication is required, we rely on the
    cryptographic properties of keys.
 
 Some caveats of the cryptographic model:
 
+- The private keys corresponding to the registered SSH keys is what protect
+  the secrets. If a key is compromised, all the secrets that have been granted
+  are potentially compromised.
+
 - We assume 2048bit for RSA keys, although this can be parameterised.
 
-- We use AES-256-CBC as most OpenSSL distributions don't support GCM yet (see `openssl aes-256-gcm` returning `aes-256-gcm: AEAD ciphers not supported`).
-
-- Using AES-256-GCM instead of AES-256-CBC does not provide authentication.
-
-- We do not provide integrity verification of encrypted secrets, an attacker
-  could replace an existing secret, however this can be mitigated when
-  using a repository like Git to store secrets.
+- We use AES-256-CBC (encryption) and HMAC (authentication). AES-256-GCM would
+  be better, but is not available for good reasons
+  (see `openssl aes-256-gcm` returning `aes-256-gcm: AEAD ciphers not supported`,
+  also see [this openssl issue](https://github.com/openssl/openssl/issues/12220)
+  and the [corresponding discussion](https://github.com/openssl/openssl/discussions/22269) for more detail).
 
 - Once a secret is granted to a user, the secret should be considered known.
   As a result, when you revoke access to a secret, you should also rotate it.
@@ -97,7 +100,7 @@ And some more general caveats for security:
 - The CLI tool uses the shell and temporary files (cleanup, with appropriate
   permissions), which offers a window for a local attack.
 
-- The CLI tool does not do strong input validation, it's mean to be run by
+- The CLI tool does not do strong input validation, it's meant to be run by
   yourself directly.
 
 
