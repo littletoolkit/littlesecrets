@@ -298,9 +298,11 @@ function ls_match_item {
 	shift
 	if [ -n "$store" ]; then
 		for item_path in ${store}/${path}; do
-			item="$(basename "$(dirname "$item_path")")"
-			if [ -n "$(ls_match "$item" "$@")" ]; then
-				echo "$item_path"
+			if [ -e "$item_path" ]; then
+				item="$(basename "$(dirname "$item_path")")"
+				if [ -n "$(ls_match "$item" "$@")" ]; then
+					echo "$item_path"
+				fi
 			fi
 		done
 	else
@@ -324,16 +326,16 @@ function ls_option { # OPTION
 # This is to make sure we
 
 # Generate a random 256-bit encryption key when the script starts
-LS_VALUE_ENCKEY=$(openssl rand -hex 32)
+LS_VALUE_ENCRYPTION_KEY=$(openssl rand -hex 32)
+LS_VALUE_ENCRYPTION_IV="00000000000000000000000000000000"
 
-# Function: ls_value_symencrypt [STDIN] [STDOUT]
+# Function: ls_value_encrypt [STDIN] [STDOUT]
 # Function to encrypt stdin to stdout using the key
-function ls_value_symencrypt() {
+function ls_value_encrypt() {
 	if [[ -z "$LS_VALUE_ENCKEY" ]]; then
 		ls_log_error "LS_VALUE_ENCKEY not set"
 		return 1
 	fi
-
 	# Use AES-256-CBC for encryption
 	# -e: encrypt
 	# -aes-256-cbc: cipher algorithm
@@ -341,25 +343,21 @@ function ls_value_symencrypt() {
 	# -iv: initialization vector (using fixed IV for simplicity, but you could generate random)
 	# -nosalt: don't use salt (for consistency)
 	openssl enc -e -aes-256-cbc \
-		-K "$LS_VALUE_ENCKEY" \
-		-iv "00000000000000000000000000000000" \
+		-K "$LS_VALUE_ENCRYPTION_KEY" \
+		-iv "$LS_VALUE_ENCRYPTION_IV" \
 		-nosalt 2>/dev/null || return 1
 }
 
-# Function: ls_value_symdecrypt [STDIN] [STDOUT]
+# Function: ls_value_decrypt [STDIN] [STDOUT]
 # Function to decrypt stdin to stdout using the key
-function ls_value_symdecrypt() {
+function ls_value_decrypt() {
 	if [[ -z "$LS_VALUE_ENCKEY" ]]; then
 		ls_log_error "LS_VALUE_ENCKEY not set"
 		return 1
 	fi
-
-	# Use AES-256-CBC for decryption
-	# -d: decrypt
-	# Same parameters as encryption
 	openssl enc -d -aes-256-cbc \
-		-K "$LS_VALUE_ENCKEY" \
-		-iv "00000000000000000000000000000000" \
+		-K "$LS_VALUE_ENCRYPTION_KEY" \
+		-iv "$LS_VALUE_ENCRYPTION_IV" \
 		-nosalt 2>/dev/null || return 1
 }
 
@@ -415,7 +413,7 @@ function ls_ssh_keypair_ensure { # KEYPATH
 # in all cases that should be supported.
 # --
 # Returns the normalize private key path for the key at the given path
-function ls_privkey_path { #KEYPATH
+function ls_privkey_path { #KEYPATH?
 	ls_ssh_keypair_ensure "$@"
 }
 
@@ -546,7 +544,6 @@ function ls_key_id_match { #TYPE FORMATS
 			local text_format="${text#*:}"
 			text_format="${text_format%%:*}"
 			# Check each required format
-			local all_found=1
 			IFS='+' read -ra required_formats <<<"$formats"
 			for fmt in "${required_formats[@]}"; do
 				if [[ "$text_format" != *"$fmt"* ]]; then
@@ -674,26 +671,39 @@ function ls_key {
 
 # --
 function ls_encrypt_sym { # KEY
-	local key_path=$(ls_mkstemp "$1")
 	local res=0
+	local key="$1"
 	ls_log_output_start
-	if ! openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
+	# Use a file descriptor to pass the key without writing to disk
+	if ! {
+		# Open fd 3 for reading from a here-string
+		exec 3<<<"$key"
+		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass fd:3
+		local openssl_res=$?
+		exec 3<&- # Close fd 3
+		return $openssl_res
+	}; then
 		res=1
 		ls_log_error "ls_encrypt_sym: Could not encrypt secret [$?]"
 	fi
 	ls_log_output_end
-	unlink "$key_path"
-	return $res
+	return "$res"
 }
 
 # --
 # Generates the signature for the given key
 function ls_hmac { # KEY
 	local res=0
+	local HMAC_KEY=""
 	ls_log_output_start
-	if ! openssl dgst -sha256 -hmac "$1" | cut -d' ' -f2; then
+	# Use env variable to pass key (doesn't show in cmdline)
+	if ! {
+		HMAC_KEY="$1" bash -c 'openssl dgst -sha256 -hmac "$HMAC_KEY"' | cut -d' ' -f2
+	}; then
 		res=1
 		ls_log_error "ls_hmac: Could not generate secret HMAC [$?]"
+	else
+		echo -n "$HMAC_KEY"
 	fi
 	ls_log_output_end
 	return $res
@@ -703,24 +713,33 @@ function ls_hmac { # KEY
 # Decrypts `1:SECRET` (encoded) with `2:KEY` (encoded), returning the
 # decrypted secrets (unencoded)
 function ls_decrypt_sym { # KEY
-	local key_path=
 	local res=0
-	local key_path="$(ls_mkstemp "$1")"
+	local key="$1"
+
 	ls_log_output_start
-	if ! openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
+	# Use a file descriptor to pass the key without writing to disk
+	# Create a pipe and write the key to it
+	if ! {
+		# Open fd 3 for reading from a here-string
+		exec 3<<<"$key"
+		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass fd:3
+		local openssl_res=$?
+		exec 3<&- # Close fd 3
+		return $openssl_res
+	}; then
 		res=1
 		ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$?]"
 	fi
+	key=""
 	ls_log_output_end
-	ls_unlink "$key_path"
-	return $res
+	return "$res"
 }
 
 # --
 # Encrypts the given secret using the given public key. When the key is empty
 # it will be sourced using `ls_pubkey`, otherwise it can be given either
 # as a path, or as a value. This returns the encrypted secret.
-function ls_encrypt_asym { # PUBKEY? PATH?
+function ls_encrypt_asym_old { # PUBKEY? PATH?
 	local pubkey="${1:-}"
 	local secret_path="${2:-/dev/stdin}"
 	local pubkey_path=
@@ -746,6 +765,38 @@ function ls_encrypt_asym { # PUBKEY? PATH?
 	return $res
 }
 
+function ls_encrypt_asym { # PUBKEY? PATH?
+	local pubkey="${1:-}"
+	local secret_path="${2:-/dev/stdin}"
+	local pubkey_path=
+	local pubkey_from_fd=0
+	local res=0
+
+	if [ -z "$pubkey" ]; then
+		pubkey_path="$(ls_pubkey_path)"
+	elif [ -e "$pubkey" ]; then
+		pubkey_path="$pubkey"
+	else
+		# Public key is a string, use file descriptor
+		exec 3<<<"$pubkey"
+		pubkey_path="/dev/fd/3"
+		pubkey_from_fd=1
+	fi
+
+	ls_log_output_start
+	if ! openssl pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out /dev/stdout; then
+		res=1
+		ls_log_error "ls_encrypt_asym: Could not asymmetrically encrypt secret"
+	fi
+	ls_log_output_end
+
+	if [ "$pubkey_from_fd" == 1 ]; then
+		exec 3<&- # Close fd 3
+	fi
+
+	return $res
+}
+
 # --
 # Decrypts the given encrypted secret using the given private key. When the key is empty
 # it will be sourced using `ls_privkey`, otherwise it can be given either
@@ -754,26 +805,32 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	local privkey="${1:-}"
 	local secret_path="${2:-/dev/stdin}"
 	local privkey_path=
-	local privkey_temp=0
+	local privkey_from_fd=0
 	local res=0
+
 	if [ -z "$privkey" ]; then
 		privkey_path="$(ls_privkey_path)"
 	elif [ -e "$privkey" ]; then
 		privkey_path="$privkey"
 	else
-		privkey_path="$(ls_mkstemp "$privkey")"
-		privkey_temp=1
+		# Private key is a string, use file descriptor
+		exec 3<<<"$privkey"
+		privkey_path="/dev/fd/3"
+		privkey_from_fd=1
 	fi
+
 	ls_log_output_start
 	if ! openssl pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out /dev/stdout; then
-		res=$1
-		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$?]"
+		res=$? # Fixed: was res=$1
+		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$res]"
 	fi
 	ls_log_output_end
-	if [ "$privkey_temp" == 1 ]; then
-		unlink "$privkey_path"
+
+	if [ "$privkey_from_fd" == 1 ]; then
+		exec 3<&- # Close fd 3
 	fi
-	return "$res"
+
+	return $res
 }
 
 # -----------------------------------------------------------------------------
@@ -989,21 +1046,36 @@ function ls_user_privkey { # KEY?
 # =============================================================================
 
 function ls_secret_list {
-	for secret in $(ls_match_item "secret/*/secret.enc" "$@"); do
-		local path="$(dirname "$secret")"
-		local name="$(basename "$path")"
-		local keys=$(ls "$path"/*.key 2>/dev/null)
-		if [ -n "$keys" ]; then
-			echo "$name"
+	local secrets
+	secrets=$(ls_match_item "secret/*/secret.enc" "$@")
+	if [ -z "$secrets" ]; then
+		if [ -z "$*" ]; then
+			ls_log_message "No secrets found at: $(ls_store)"
 		else
-			ls_log_warning "Empty secrets folder: $path"
+			ls_log_message "No secrets matching '$*' found at: $(ls_store)"
 		fi
-	done
+	else
+		local path
+		local name
+		local keys
+		for secret in $secrets; do
+			path="$(dirname "$secret")"
+			name="$(basename "$path")"
+			keys=$(ls "$path"/*.key 2>/dev/null)
+			if [ -n "$keys" ]; then
+				echo "$name"
+			else
+				ls_log_warning "Empty secrets folder: $path"
+			fi
+		done
+	fi
 }
 
 function ls_secret_keys { # SECRET
-	local path="$(ls_secret_path "$1")"
-	local keys=$(ls "$path"/*.key 2>/dev/null)
+	local path
+	path="$(ls_secret_path "$1")"
+	local keys
+	keys=$(ls "$path"/*.key 2>/dev/null)
 	if [ -n "$keys" ]; then
 		echo "$keys" | xargs -n1 basename | sed "s|.key||g" | xargs echo -n
 	fi
@@ -1011,9 +1083,12 @@ function ls_secret_keys { # SECRET
 
 function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	local secret="$1"
-	local secret_path="$(ls_store)/secret/$secret/secret.enc"
-	local secret_hmac_path="$(ls_store)/secret/$secret/secret.hmac"
-	local has_hmac="$(ls_option hmac)"
+	local secret_path
+	secret_path="$(ls_store)/secret/$secret/secret.enc"
+	local secret_hmac_path
+	secret_hmac_path="$(ls_store)/secret/$secret/secret.hmac"
+	local has_hmac
+	has_hmac="$(ls_option hmac)"
 	# This creates the secret key, if it is not given. Not the key is ls_encoded.
 	local secret_key="${3:-}"
 	if [ -z "$secret_key" ]; then
@@ -1025,16 +1100,21 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	ls_encrypt_sym "$secret_key" </dev/stdin >"$secret_path"
 
 	# Second step, encrypt the secret key for each of the user's host keys
-	local user=$(ls_user_name "" "${2:-}")
+	local user
+	user=$(ls_user_name "" "${2:-}")
+	local host
+	local secret_key_path
 	if [ -n "${2:-}" ]; then
 		# If a specific pubkey is provided, use only that
-		local user_pubkey=$(echo "${2:-}" | ls_decode)
-		local host=$(ls_user_host "" "$2")
-		local secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
+		local user_pubkey
+		user_pubkey=$(echo "${2:-}" | ls_decode)
+		host=$(ls_user_host "" "$2")
+		secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
 		ls_log_action "ls_secret_write: Encrypting secret key to $secret_key_path"
 		ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
 	else
-		local user_keys=$(ls_user_list_keys "$user")
+		local user_keys
+		user_keys=$(ls_user_list_keys "$user")
 		if [ -z "$user_keys" ]; then
 			ls_user_register
 			user_keys=$(ls_user_list_keys "$user")
@@ -1045,8 +1125,8 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 		fi
 		# Otherwise encrypt for all host keys
 		for pubkey_path in $user_keys; do
-			local host=$(basename "$pubkey_path" .pubkey)
-			local secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
+			host=$(basename "$pubkey_path" .pubkey)
+			secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
 			ls_log_action "ls_secret_write: Encrypting secret key to $secret_key_path"
 			ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
 		done
@@ -1067,9 +1147,12 @@ function ls_secret_add { # NAME VALUE PUBKEY? ENCKEY?
 }
 
 function ls_secret_key_path { # SECRET USER?
-	local store="$(ls_store)"
-	local user=$(ls_user_name "${2:-}")
-	local host=$(ls_user_host "${2:-}")
+	local store
+	store="$(ls_store)"
+	local user
+	user=$(ls_user_name "${2:-}")
+	local host
+	host=$(ls_user_host "${2:-}")
 	if [ -z "$store" ]; then return 1; fi
 	local secret_key_path="$store/secret/$1/$user@$host.key"
 	if [ -e "$secret_key_path" ]; then
@@ -1082,7 +1165,8 @@ function ls_secret_key_path { # SECRET USER?
 function ls_secret_path { # SECRET
 	# We locate the secret
 	local secret="$1"
-	local store="$(ls_store)"
+	local store
+	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 	local secret_path="$store/secret/$secret"
 	if [ ! -e "$secret_path/secret.enc" ]; then
@@ -1093,8 +1177,10 @@ function ls_secret_path { # SECRET
 }
 
 function ls_secret_key { # SECRET PRIVKEY?
-	local user_privkey=$(ls_user_privkey "${2:-}" | ls_decode)
-	local secret_key_path="$(ls_secret_key_path "$1")"
+	local user_privkey
+	user_privkey=$(ls_user_privkey "${2:-}" | ls_decode)
+	local secret_key_path
+	secret_key_path="$(ls_secret_key_path "$1")"
 	if [ "$?" != 0 ]; then
 		return 1
 	elif [ -z "$secret_key_path" ]; then
@@ -1154,12 +1240,14 @@ function ls_secret_get { # NAME PRIVKEY?
 }
 
 function ls_secret_verify { # NAME PRIVEY?
-	local store="$(ls_store)"
+	local store
+	store="$(ls_store)"
 	local secret_hmac_path="$store/secret/$1/secret.hmac"
 	if [ ! -e "$secret_hmac_path" ]; then
 		return 0
 	fi
-	local hmac="$(ls_secret_hmac "$1" "$(ls_secret_key "$1" "${2:-}")")"
+	local hmac
+	hmac="$(ls_secret_hmac "$1" "$(ls_secret_key "$1" "${2:-}")")"
 	if [ $? -ne 0 ]; then
 		return 1
 	elif [ "$(cat "$secret_hmac_path")" != "$hmac" ]; then
@@ -1170,7 +1258,8 @@ function ls_secret_verify { # NAME PRIVEY?
 }
 
 function ls_secret_remove { # SECRET
-	local store="$(ls_store)"
+	local store
+	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 	local secret_path="$store/secret/$1"
 	if [ -e "$secret_path" ]; then
@@ -1181,7 +1270,8 @@ function ls_secret_remove { # SECRET
 }
 
 function ls_secret_grant { # SECRET USER_EXPR
-	local store="$(ls_store)"
+	local store
+	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 	local secret_pattern="$1"
 	shift
@@ -1235,7 +1325,8 @@ function ls_secret_grant { # SECRET USER_EXPR
 }
 
 function ls_secret_users { # SECRET?
-	local store="$(ls_store)"
+	local store
+	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 
 	# If no secret specified, list for all secrets
@@ -1259,13 +1350,16 @@ function ls_secret_users { # SECRET?
 }
 
 function ls_secret_revoke { # SECRET USER_EXPR
-	local store="$(ls_store)"
+	local store
+	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 	local secret="$1"
 	shift
 	for user_expr in "$@"; do
-		local user=$(ls_user_name "$user_expr")
-		local host=$(ls_user_host "$user_expr")
+		local user
+		user=$(ls_user_name "$user_expr")
+		local host
+		host=$(ls_user_host "$user_expr")
 
 		if [[ "$user_expr" == *@* ]]; then
 			# If user@host format, revoke only from that specific host
@@ -1281,14 +1375,17 @@ function ls_secret_revoke { # SECRET USER_EXPR
 }
 
 function ls_user_deregister { # USER KEY?
-	local store="$(ls_store)"
+	local store
+	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 	local user="$1"
 	local key="${2:-}"
 	if [ -n "$key" ]; then
 		# Only remove if key matches
-		local current=$(ls_user_pubkey "$user")
-		local given=$(ls_pubkey_import "$key")
+		local current
+		current=$(ls_user_pubkey "$user")
+		local given
+		given=$(ls_pubkey_import "$key")
 		if [ "$current" = "$given" ]; then
 			rm -f "$store/user/$user.pubkey"
 			return 0
@@ -1305,10 +1402,15 @@ function ls_secret_export {
 	# This exports as a shell script, but we could export to other formats if
 	# necessary.
 	if [ $# -eq 0 ]; then
-		ls_secret_export $(ls_secret_list)
+		local secrets
+		secrets=$(ls_secret_list)
+		if [ -z "$secrets" ]; then
+			echo "# No secrets in $(ls_store)"
+		else
+			ls_secret_export "$secrets"
+		fi
 	else
 		local env=""
-		local sec=""
 		for var in "$@"; do
 			env="${var%%=*}"
 			secname="${var##*=}"
@@ -1331,9 +1433,6 @@ function ls_cli {
 	local VERSION="1.0.0"
 
 	# Parse global options first
-	local orig_key="$LITTLESECRETS_KEY"
-	local orig_user="$LITTLESECRETS_USER"
-	local orig_host="$LITTLESECRETS_HOST"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1373,9 +1472,6 @@ function ls_cli {
 
 	local cmd="${1:-}"
 	shift || true
-
-	# Handle the command
-	local ret=0
 
 	case "$cmd" in
 	## help              Show this help message
@@ -1457,26 +1553,26 @@ function ls_cli {
 		valid=()
 		invalid=()
 		nokey=()
-		for SECRET in $(ls_secret_list "$@"); do
-			SECRET="${SECRET%%:*}"
-			HMAC_PATH="$(ls_secret_hmac_path "$SECRET")"
-			echo -n "Verifying $SECRET… "
+		for SECRET_NAME in $(ls_secret_list "$@"); do
+			SECRET_NAME="${SECRET_NAME%%:*}"
+			HMAC_PATH="$(ls_secret_hmac_path "$SECRET_NAME")"
+			echo -n "Verifying $SECRET_NAME… "
 			if [ ! -e "$HMAC_PATH" ]; then
-				nokey+=($SECRET)
+				nokey+=("$SECRET_NAME")
 				echo "${ORANGE}no hash${RESET}"
-			elif [ "$(cat "$HMAC_PATH")" != "$(ls_secret_hmac "$SECRET")" ]; then
-				ls_log_warning "Existing HMAC differs for secret $SECRET"
+			elif [ "$(cat "$HMAC_PATH")" != "$(ls_secret_hmac "$SECRET_NAME")" ]; then
+				ls_log_warning "Existing HMAC differs for secret $SECRET_NAME"
 				ls_log_tip "Most likely the original secret has changed and you haven't been granted the key."
-				invalid+=($SECRET)
+				invalid+=($SECRET_NAME)
 				echo "${RED}INVALID${RESET}"
 			else
-				valid+=($SECRET)
+				valid+=($SECRET_NAME)
 				echo "${GREEN}OK${RESET}"
 			fi
 		done
-		if [ ${#valid[@]} -ne 0 ]; then ls_log_message "Valid: ${GREEN}${valid[@]}${RESET}"; fi
-		if [ ${#invalid[@]} -ne 0 ]; then ls_log_message "Invalid: ${RED}${invalid[@]}${RESET}"; fi
-		if [ ${#nokey[@]} -ne 0 ]; then ls_log_message "Unverified: ${BLUE}${nokey[@]}${RESET}"; fi
+		if [ ${#valid[@]} -ne 0 ]; then ls_log_message "Valid: ${GREEN}${valid[*]}${RESET}"; fi
+		if [ ${#invalid[@]} -ne 0 ]; then ls_log_message "Invalid: ${RED}${invalid[*]}${RESET}"; fi
+		if [ ${#nokey[@]} -ne 0 ]; then ls_log_message "Unverified: ${BLUE}${nokey[*]}${RESET}"; fi
 		if [ ${#invalid[@]} -eq 0 ]; then
 			return 0
 		else
