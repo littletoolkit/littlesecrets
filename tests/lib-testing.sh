@@ -513,7 +513,7 @@ function test-diff {
 		local b=$(mktemp -p "$TEST_PATH" var.XXX)
 		echo "$1" >"$a"
 		echo "$2" >"$b"
-		test_log "${ORANGE}>>> Expected/Retrieved"
+		test_log "${ORANGE}>>> Retrieved/Expected"
 		test_log "${ORANGE}A:[${RESET}$1${ORANGE}] $(openssl sha256 "$a" | cut -d' ' -f2)"
 		test_log "${ORANGE}B:[${RESET}$2${ORANGE}] $(openssl sha256 "$b" | cut -d' ' -f2)"
 		test_log_run "${ORANGE}>>>" diff -u "$a" "$b"

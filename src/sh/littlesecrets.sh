@@ -28,11 +28,11 @@ LITTLESECRETS_HOST=${LITTLESECRETS_HOST:-$HOSTNAME}
 LITTLESECRETS_KEY=${LITTLESECRETS_KEY:-$HOME/.ssh/id_rsa}
 LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
-LITTLESECRETS_KEYSIZE=2048 # NOTE: It would be best to do 4096, and we should test keys
+LITTLESECRETS_KEYSIZE=${LITTLESECRETS_KEYSIZE:-2048} # NOTE: It would be best to do 4096, and we should test keys
 # --
 # Options:
 # - hmac: stores the secret HMAC for verification
-LITTLESECRETS_OPTIONS=hmac
+LITTLESECRETS_OPTIONS=${LITTLESECRETS_OPTIONS:-hmac}
 
 # -----------------------------------------------------------------------------
 #
@@ -103,28 +103,34 @@ export RESET
 #
 # -----------------------------------------------------------------------------
 
+LS_LOG_PREFIX="${DIM}[ls]${RESET}"
+
+function ls_log {
+	echo "${LS_LOG_PREFIX}$*${RESET}" >&2
+}
+
 function ls_log_action {
-	echo " → $*" >&2
+	ls_log "${DIM}${BOLD} → ACT $*" >&2
 	return 0
 }
 
 function ls_log_message {
-	echo " … $*" >&2
+	ls_log "${DIM} … NFO $*"
 	return 0
 }
 
 function ls_log_tip {
-	echo " ✱ $*" >&2
+	ls_log " ✱ TIP $*"
 	return 0
 }
 
 function ls_log_error {
-	echo "${RED}!!! ERR ${BOLD}$*${RESET}" >&2
+	ls_log "${RED}!!! ERR ${BOLD}$*"
 	return 0
 }
 
 function ls_log_warning {
-	echo "${ORANGE}/!\\ WRN ${BOLD}$*${RESET}" >&2
+	ls_log "${ORANGE} ⚠ WRN ${BOLD}$*"
 	return 0
 }
 
@@ -147,13 +153,13 @@ function ls_log_stack {
 			line="$(echo "$frame" | cut -d' ' -f1)"
 			func="$(echo "$frame" | cut -d' ' -f2)"
 			path="$(echo "$frame" | cut -d' ' -f3-)"
-			echo >&2 "${ORANGE} ▸  #${i} ${YELLOW}${BOLD}$func() ${RESET}$path:$line"
+			ls_log "${ORANGE} ▸  #${i} ${YELLOW}${BOLD}$func() ${RESET}$path:$line"
 		fi
 	done
 }
 
 function ls_on_error {
-	echo >&2 "${RED} ⚠  ERR LittleSecrets Command failed $?: !! ${RESET}"
+	echo >&2 "${LS_LOG_PREFIX}${RED} ⚠  ERR LittleSecrets Command failed $?: !! ${RESET}"
 	ls_log_stack 5
 	if [ -n "${LS_TRAP_ERROR_PREVIOUS}" ]; then
 		eval "$LS_TRAP_ERROR_PREVIOUS"
@@ -493,21 +499,21 @@ function ls_pubkey_import { #KEYPATH
 		cp -a "$keypath" "${keyout_tmp}"
 		ls_log_output_start
 		if ! ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2; then
-			res="$?"
+			res=$?
 		else
 			openssl rsa -in "$keyout_tmp" -pubout
-			res="$?"
+			res=$?
 		fi
 		ls_log_output_end
 		unlink "$keyout_tmp"
 		;;
 	private:pkcs8*)
 		openssl rsa -in "$keypath" -pubout
-		res="$?"
+		res=$?
 		;;
 	public:ssh+rsa*)
 		ssh-keygen -f "$keypath" -e -m PKCS8
-		res="$?"
+		res=$?
 		;;
 	public:spki*)
 		cat "$keypath"
@@ -544,12 +550,15 @@ function ls_key_id_match { #TYPE FORMATS
 			local text_format="${text#*:}"
 			text_format="${text_format%%:*}"
 			# Check each required format
+			local ifs="$IFS"
 			IFS='+' read -ra required_formats <<<"$formats"
 			for fmt in "${required_formats[@]}"; do
 				if [[ "$text_format" != *"$fmt"* ]]; then
+					IFS="$ifs"
 					return 1
 				fi
 			done
+			IFS="$ifs"
 			return 0
 		fi
 	done
@@ -671,6 +680,16 @@ function ls_key {
 
 # --
 function ls_encrypt_sym { # KEY
+	local key_path=$(ls_mkstemp "$1")
+	ls_log_output_start
+	if ! openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
+		ls_log_error "ls_encrypt_sym: Could not encrypt secret"
+	fi
+	ls_log_output_end
+	unlink "$key_path"
+}
+
+function ls_encrypt_sym_NEW2 { # KEY
 	local res=0
 	local key="$1"
 	ls_log_output_start
@@ -692,7 +711,7 @@ function ls_encrypt_sym { # KEY
 
 # --
 # Generates the signature for the given key
-function ls_hmac { # KEY
+function ls_hmac_NEW { # KEY
 	local res=0
 	local HMAC_KEY=""
 	ls_log_output_start
@@ -709,12 +728,26 @@ function ls_hmac { # KEY
 	return $res
 }
 
+# Function: ls_hmac
+# Calculates the hmac value of the given secret
+function ls_hmac { # KEY
+	ls_log_output_start
+	if [ -z "$1" ]; then
+		ls_log_error "ls_hmac: Given key is empty"
+		return 1
+	elif ! openssl dgst -sha256 -hmac "$1" | cut -d' ' -f2; then
+		ls_log_error "ls_hmac: Could not generate secret HMAC"
+	fi
+	ls_log_output_end
+}
+
 # --
 # Decrypts `1:SECRET` (encoded) with `2:KEY` (encoded), returning the
 # decrypted secrets (unencoded)
 function ls_decrypt_sym { # KEY
 	local res=0
-	local key_path="$(ls_mkstemp "$1")"
+	local key_path
+	key_path="$(ls_mkstemp "$1")"
 	# We use file descriptors so that we don't store the key there
 	ls_log_output_start
 	if ! openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
@@ -725,6 +758,7 @@ function ls_decrypt_sym { # KEY
 	ls_unlink "$key_path"
 	return $res
 }
+
 function ls_decrypt_sym_NEW { # KEY
 	local res=0
 	local key="$1"
@@ -830,14 +864,14 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	fi
 	ls_log_output_start
 	if ! openssl pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out /dev/stdout; then
-		res=$1
 		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$?]"
+		res=1
 	fi
 	ls_log_output_end
 	if [ "$privkey_temp" == 1 ]; then
 		unlink "$privkey_path"
 	fi
-	return "$res"
+	return $res
 }
 
 function ls_decrypt_asym_NEW { # PRIVKEY? PATH?
@@ -1208,12 +1242,13 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	fi
 	if [ -n "$has_hmac" ]; then
 		ls_log_action "ls_secret_write: Saving secret signature to $secret_hmac_path"
-		lcaol secret_hmac_path_tmp
+		local secret_hmac_path_tmp
 		secret_hmac_path_tmp=$(ls_mkstemp)
-		if ! ls_try_write "$secret_hmac_path_tmp" "$secret_hmac_path" ls_secret_hmac "$1" "$secret_key" >"$secret_hmac_path_tmp"; then
-			ls_log_error "ls_secret_write: Writing hmac failed at $secret_key_path"
-			res=1
-		fi
+		# FIXME: This is not working
+		# if ! ls_try_write "$secret_hmac_path_tmp" "$secret_hmac_path" ls_secret_hmac "$1" "$secret_key" >"$secret_hmac_path_tmp"; then
+		# 	ls_log_error "ls_secret_write: Writing hmac failed at $secret_key_path [$?]"
+		# 	res=1
+		# fi
 	fi
 	echo "$secret_path"
 	return $res
@@ -1272,14 +1307,20 @@ function ls_secret_key { # SECRET PRIVKEY?
 	fi
 }
 
-function ls_secret_hmac { #SECRET
-	# NOTE: Here the key is base64 encoded as otherwise
-	# we get null byte errors.
+# Function: ls_secret_hmac
+# Calculates the HMAC for the given secret
+function ls_secret_hmac { #SECRET KEY?
 	local secret_key="${2:-}"
 	if [ -z "$secret_key" ]; then
 		secret_key="$(ls_secret_key "$1")"
 	fi
-	ls_secret_get "$1" | ls_hmac "$(echo -n "$secret_key" | ls_decode | openssl base64 -d -A)"
+	# FIXME: Apparently we should compute the HMAC with a different key?
+	# NOTE: Here the key is base64 encoded as otherwise we get null byte errors.
+	if [ "$1" == "-" ]; then
+		cat /dev/stdin | ls_hmac "$(echo -n "$secret_key" | ls_decode | openssl base64 -A)"
+	else
+		ls_secret_get "$1" | ls_hmac "$(echo -n "$secret_key" | ls_decode | openssl base64 -A)"
+	fi
 }
 
 function ls_secret_hmac_path { #SECRET
@@ -1302,12 +1343,17 @@ function ls_secret_get { # NAME PRIVKEY?
 	local user_privkey
 	user_privkey=$(ls_user_privkey "${2:-}" | ls_decode)
 	local secret_key_path="$store/secret/$secret/$user@$host.key"
-	if [ ! -e "$secret_key_path" ]; then return 0; fi
+	if [ ! -e "$secret_key_path" ]; then
+		ls_log_warning "ls_secret_get: Could not retrieve secret '$1', missing secret key path: $secret_key_path"
+		return 1
+	fi
 	local secret_key
 	if ! secret_key=$(ls_decrypt_asym "$user_privkey" <"$secret_key_path"); then
+		ls_log_error "ls_secret_get: Could not retrieve secret '$1', secret key retrieval error: $secret_key_path"
 		return 1
 	fi
 	if [ -z "$secret_key" ]; then
+		ls_log_error "ls_secret_get: Could not retrieve secret '$1', decrypted secret key is empty: $secret_key_path"
 		return 1
 	fi
 	# Second step, we decrypt the secret with
@@ -1316,20 +1362,27 @@ function ls_secret_get { # NAME PRIVKEY?
 		echo -n "$secret"
 		return 0
 	else
+		ls_log_error "ls_secret_get: Could not retrieve secret '$1', secret decryption error: $secret_path"
 		return 1
 	fi
 }
 
+# Function: ls_secret_verify
+# Verifies that the secret `NAME` decrypted using the `PRIVKEY` has a
+# matching HMAC with the one stored.
 function ls_secret_verify { # NAME PRIVEY?
 	local store
 	store="$(ls_store)"
 	local secret_hmac_path="$store/secret/$1/secret.hmac"
-	if [ ! -e "$secret_hmac_path" ]; then
+	# There is no hmac, so we can't verify but return a 0
+	if [ -n "$(ls_option hmac)" ] && [ ! -e "$secret_hmac_path" ]; then
+		ls_log_warning "No hmac found for secret $1: $secret_hmac_path"
+		ls_log_tip "You can remove 'hmac' form LITTLESECRETS_OPTIONS to skip HMAC verification"
 		return 0
 	fi
 	local hmac
-	hmac="$(ls_secret_hmac "$1" "$(ls_secret_key "$1" "${2:-}")")"
-	if [ $? -ne 0 ]; then
+	if ! hmac="$(ls_secret_hmac "$1" "$(ls_secret_key "$1" "${2:-}")")"; then
+		ls_log_error "Could not compute HMAC for secret $1"
 		return 1
 	elif [ "$(cat "$secret_hmac_path")" != "$hmac" ]; then
 		return 1
@@ -1488,17 +1541,27 @@ function ls_secret_export {
 		if [ -z "$secrets" ]; then
 			echo "# No secrets in $(ls_store)"
 		else
-			ls_secret_export "$secrets"
+			# We do want to split this and pass it as arguments
+			# shellcheck disable=SC2068
+			ls_secret_export ${secrets[@]}
 		fi
 	else
-		local env=""
+		local envname
+		local secname
+		local secval
 		for var in "$@"; do
-			env="${var%%=*}"
+			envname="${var%%=*}"
 			secname="${var##*=}"
-			if [ "$env" == "$secname" ]; then
-				env="$(echo "${env//./_}" | tr 'a-z' 'A-Z')"
+			if [ "$envname" == "$secname" ]; then
+				envname="$(echo "${envname//./_}" | tr 'a-z' 'A-Z')"
 			fi
-			echo "export $env='$(ls_secret_get "$secname")'"
+			if ! secval=$(ls_secret_get "$secname"); then
+				ls_log_error "Unable to retrieve secret: $secname"
+				echo "# Unable to retrieve secret: $secname"
+			else
+				# NOTE: Newlines are actually OK
+				echo "export $envname='${secval}'"
+			fi
 		done
 	fi
 }
@@ -1598,6 +1661,7 @@ function ls_cli {
 			return 1
 		else
 			ls_secret_get "$1" "${2:-}"
+			return $?
 		fi
 		;;
 	## add|set <name> [value] Set a secret's value
@@ -1609,9 +1673,11 @@ function ls_cli {
 		if [ -n "${2:-}" ]; then
 			# Content provided as argument
 			ls_secret_add "$1" "$2" "${3:-}" "${4:-}"
+			return $?
 		else
 			# Read content from stdin
 			ls_secret_add "$1" "" "${2:-}" "${3:-}"
+			return $?
 		fi
 		;;
 	## hash NAMES* Ensures the secrets habe a matching hash
@@ -1667,6 +1733,7 @@ function ls_cli {
 			return 1
 		fi
 		ls_secret_remove "$1"
+		return $?
 		;;
 	## grant <name> <expr...> Grant access to users matching expr
 	"grant")
@@ -1678,6 +1745,7 @@ function ls_cli {
 			return 1
 		fi
 		ls_secret_grant "$1" "${@:2}"
+		return $?
 		;;
 	## revoke <name> <expr...> Revoke access from users matching expr
 	"revoke")
@@ -1686,10 +1754,12 @@ function ls_cli {
 			return 1
 		fi
 		ls_secret_revoke "$1" "$2"
+		return $?
 		;;
 	## register [user] [key] Register a user's public key
 	"register")
 		ls_user_register "${1:-}" "${2:-}"
+		return $?
 		;;
 	## deregister <user> [key] De-register a user's public key
 	"deregister")
@@ -1698,15 +1768,18 @@ function ls_cli {
 			return 1
 		fi
 		ls_user_deregister "$1" "${2:-}"
+		return $?
 		;;
 	## users [expr...]    List users matching expr
 	"users")
 		ls_user_list "$@"
+		return $?
 		;;
 	## access [expr...]   List users with access to secrets matching expr
 	"access")
 		if [ -z "${1:-}" ]; then
 			ls_secret_users
+			return $?
 		else
 			for secret in $(ls_secret_list "$@"); do
 				echo -n "$secret:"
@@ -1718,6 +1791,7 @@ function ls_cli {
 	## export [VAR=secret...]   Exports the given secrets as variables
 	"export")
 		ls_secret_export "$@"
+		return $?
 		;;
 	*)
 		if [ -n "$cmd" ]; then

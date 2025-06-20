@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"/src/sh/littlesecrets.sh
-source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"/tests/lib-testing.sh
+BASE="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
+source "$BASE/src/sh/littlesecrets.sh"
+source "$BASE/tests/lib-testing.sh"
 
 # --
-# Tests add/get secrets
+# Testing the granting of secrets, and making sure that only the required
+# user has access
 
 test-start
 

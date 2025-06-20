@@ -1,4 +1,5 @@
 .aider*
+.conform*
 .zig*
 .littlesecrets
 zig-cache

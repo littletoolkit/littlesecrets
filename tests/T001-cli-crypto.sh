@@ -33,6 +33,9 @@ SECRET_ENC=$(echo -n "$SECRET" | ls_encrypt_asym "$(ls_pubkey_path)" | ls_encode
 SECRET_DEC=$(echo -n "$SECRET_ENC" | ls_decode | ls_decrypt_asym "$(ls_privkey_path)")
 test-expect "$SECRET_DEC" "$SECRET" "Secret asymmetrically decoded"
 
+test-step "HMAC Validation"
+test-expect-different "$(echo -n "$SECRET" | ls_secret_hmac - "$KEY")" "$(echo -n "${SECRET}X" | ls_secret_hmac - "$KEY")" "HMAC signature changes based on secret"
+
 test-end
 
 # EOF
