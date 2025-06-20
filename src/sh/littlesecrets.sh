@@ -173,7 +173,8 @@ function ls_on_error {
 # and keys.
 function ls_mkstemp {
 	local res
-	res="$(mktemp)"
+	# Ensures we write in a directory not accessible to other users
+	res="$(mktemp -p "${TMPDIR:-/tmp}")"
 	chmod 600 "$res"
 	LS_CLEANUP+=("$res")
 	# If there's a second argument, that's going to be the contents, previously
@@ -313,6 +314,53 @@ function ls_option { # OPTION
 	if [[ $LITTLESECRETS_OPTIONS == *"$1"* ]]; then
 		echo "$1"
 	fi
+}
+
+# -----------------------------------------------------------------------------
+#
+# VALUE ENCRYPTION
+#
+# -----------------------------------------------------------------------------
+# This is to make sure we
+
+# Generate a random 256-bit encryption key when the script starts
+LS_VALUE_ENCKEY=$(openssl rand -hex 32)
+
+# Function: ls_value_symencrypt [STDIN] [STDOUT]
+# Function to encrypt stdin to stdout using the key
+function ls_value_symencrypt() {
+	if [[ -z "$LS_VALUE_ENCKEY" ]]; then
+		ls_log_error "LS_VALUE_ENCKEY not set"
+		return 1
+	fi
+
+	# Use AES-256-CBC for encryption
+	# -e: encrypt
+	# -aes-256-cbc: cipher algorithm
+	# -K: hex key
+	# -iv: initialization vector (using fixed IV for simplicity, but you could generate random)
+	# -nosalt: don't use salt (for consistency)
+	openssl enc -e -aes-256-cbc \
+		-K "$LS_VALUE_ENCKEY" \
+		-iv "00000000000000000000000000000000" \
+		-nosalt 2>/dev/null || return 1
+}
+
+# Function: ls_value_symdecrypt [STDIN] [STDOUT]
+# Function to decrypt stdin to stdout using the key
+function ls_value_symdecrypt() {
+	if [[ -z "$LS_VALUE_ENCKEY" ]]; then
+		ls_log_error "LS_VALUE_ENCKEY not set"
+		return 1
+	fi
+
+	# Use AES-256-CBC for decryption
+	# -d: decrypt
+	# Same parameters as encryption
+	openssl enc -d -aes-256-cbc \
+		-K "$LS_VALUE_ENCKEY" \
+		-iv "00000000000000000000000000000000" \
+		-nosalt 2>/dev/null || return 1
 }
 
 # -----------------------------------------------------------------------------
