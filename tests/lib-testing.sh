@@ -186,15 +186,15 @@ function test-end {
 			res=0
 		elif [ ${#TEST_ERRORS[@]} -eq 0 ]; then
 			# 100% sucesss
-			test_log "${GREEN}${BOLD}EOK${RESET}${GREEN}  $((100 * sn / tn))% ($sn/$tn)${RESET}"
+			test_log "${GREEN}${BOLD}EOK${RESET}${GREEN}  $((100 * sn / tn))% ($sn/$tn) succeeded${RESET}"
 			res=0
 		elif [ "$sn" == 0 ]; then
 			# 100% failed
-			test_log "${RED}${BOLD}EFAIL${RESET}${RED} $((100 * sn / tn))% ($en/$tn)${RESET}"
+			test_log "${RED}${BOLD}EFAIL${RESET}${RED} $((100 * en / tn))% ($en/$tn) failed${RESET}"
 			res=2
 		else
 			# Partial fail
-			test_log "${RED}${BOLD}EFAIL${RESET}${RED} $((100 * sn / tn))% ($en/$tn)${RESET}"
+			test_log "${RED}${BOLD}EFAIL${RESET}${RED} $((100 * en / tn))% ($en/$tn) failed${RESET}"
 			res=1
 		fi
 		if [ "$res" == 0 ]; then
