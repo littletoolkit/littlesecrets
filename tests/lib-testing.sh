@@ -270,7 +270,7 @@ function test-step {
 # Runs the command and fails the test if the command fails.
 function test-cmd {
 	if ! "$@"; then
-		test-fail "Subcommand failed [$?]: $*"
+		test-fail "Subcommand failed [$?]: $(test_fmt_line "$*")"
 		return 1
 	else
 		return 0
@@ -366,7 +366,7 @@ function test-expect-success {
 		exit_code=$?
 	fi
 	if [ $exit_code != 0 ]; then
-		test-fail "Subcommand failed [$exit_code] $*"
+		test-fail "Subcommand was expected to succeed but failed [$exit_code] $(test_fmt_line "$*")"
 		return $exit_code
 	else
 		test-ok

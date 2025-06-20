@@ -714,6 +714,19 @@ function ls_hmac { # KEY
 # decrypted secrets (unencoded)
 function ls_decrypt_sym { # KEY
 	local res=0
+	local key_path="$(ls_mkstemp "$1")"
+	# We use file descriptors so that we don't store the key there
+	ls_log_output_start
+	if ! openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass "file:$key_path"; then
+		res=1
+		ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$?]"
+	fi
+	ls_log_output_end
+	ls_unlink "$key_path"
+	return $res
+}
+function ls_decrypt_sym_NEW { # KEY
+	local res=0
 	local key="$1"
 
 	ls_log_output_start
@@ -739,7 +752,7 @@ function ls_decrypt_sym { # KEY
 # Encrypts the given secret using the given public key. When the key is empty
 # it will be sourced using `ls_pubkey`, otherwise it can be given either
 # as a path, or as a value. This returns the encrypted secret.
-function ls_encrypt_asym_old { # PUBKEY? PATH?
+function ls_encrypt_asym { # PUBKEY? PATH?
 	local pubkey="${1:-}"
 	local secret_path="${2:-/dev/stdin}"
 	local pubkey_path=
@@ -765,7 +778,7 @@ function ls_encrypt_asym_old { # PUBKEY? PATH?
 	return $res
 }
 
-function ls_encrypt_asym { # PUBKEY? PATH?
+function ls_encrypt_asym_NEW { # PUBKEY? PATH?
 	local pubkey="${1:-}"
 	local secret_path="${2:-/dev/stdin}"
 	local pubkey_path=
@@ -802,6 +815,32 @@ function ls_encrypt_asym { # PUBKEY? PATH?
 # it will be sourced using `ls_privkey`, otherwise it can be given either
 # as a path, or as a value. This returns the decypted secret.
 function ls_decrypt_asym { # PRIVKEY? PATH?
+	local privkey="${1:-}"
+	local secret_path="${2:-/dev/stdin}"
+	local privkey_path=
+	local privkey_temp=0
+	local res=0
+	if [ -z "$privkey" ]; then
+		privkey_path="$(ls_privkey_path)"
+	elif [ -e "$privkey" ]; then
+		privkey_path="$privkey"
+	else
+		privkey_path="$(ls_mkstemp "$privkey")"
+		privkey_temp=1
+	fi
+	ls_log_output_start
+	if ! openssl pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out /dev/stdout; then
+		res=$1
+		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$?]"
+	fi
+	ls_log_output_end
+	if [ "$privkey_temp" == 1 ]; then
+		unlink "$privkey_path"
+	fi
+	return "$res"
+}
+
+function ls_decrypt_asym_NEW { # PRIVKEY? PATH?
 	local privkey="${1:-}"
 	local secret_path="${2:-/dev/stdin}"
 	local privkey_path=
@@ -1081,6 +1120,26 @@ function ls_secret_keys { # SECRET
 	fi
 }
 
+function ls_try_write {
+	local path_tmp="$1"
+	local path_dst="$2"
+	shift 2
+	if ! "$@"; then
+		ls_log_error "ls_try_write: Action failed, did not update: $path_dst"
+		unlink "$path_tmp"
+		return 1
+	else
+		if [ -e "$path_dst" ]; then
+			ls_log_message "Updating: $path_dst"
+		else
+			ls_log_message "Creating: $path_dst"
+		fi
+		cat "$path_tmp" >"$path_dst"
+		unlink "$path_tmp"
+		return 0
+	fi
+}
+
 function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	local secret="$1"
 	local secret_path
@@ -1097,21 +1156,32 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	# First step, we encrypt the secret with the secret key
 	ls_log_action "ls_secret_write: Writing encrypted secret to $secret_path"
 	ls_mkparent "$secret_path"
-	ls_encrypt_sym "$secret_key" </dev/stdin >"$secret_path"
+	local secret_path_tmp
+	secret_path_tmp=$(ls_mkstemp)
+	if ! ls_try_write "$secret_path_tmp" "$secret_path" ls_encrypt_sym "$secret_key" </dev/stdin >"$secret_path_tmp"; then
+		ls_log_error "ls_secret_write: symmetric encryption failed at $secret_path"
+		return 1
+	fi
 
 	# Second step, encrypt the secret key for each of the user's host keys
+	local res=0
 	local user
 	user=$(ls_user_name "" "${2:-}")
 	local host
 	local secret_key_path
+	local secret_key_path_tmp
 	if [ -n "${2:-}" ]; then
 		# If a specific pubkey is provided, use only that
 		local user_pubkey
 		user_pubkey=$(echo "${2:-}" | ls_decode)
 		host=$(ls_user_host "" "$2")
 		secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
+		secret_key_path_tmp=$(ls_mkstemp)
 		ls_log_action "ls_secret_write: Encrypting secret key to $secret_key_path"
-		ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path"
+		if ! ls_try_write "$secret_key_path_tmp" "$secret_key_path" ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path_tmp"; then
+			ls_log_error "ls_secret_write: asymmetric encryption failed at $secret_key_path"
+			return 1
+		fi
 	else
 		local user_keys
 		user_keys=$(ls_user_list_keys "$user")
@@ -1127,15 +1197,26 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 		for pubkey_path in $user_keys; do
 			host=$(basename "$pubkey_path" .pubkey)
 			secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
+			secret_key_path_tmp=$(ls_mkstemp)
 			ls_log_action "ls_secret_write: Encrypting secret key to $secret_key_path"
-			ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
+			if ! ls_try_write "$secret_key_path_tmp" "$secret_key_path" ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path_tmp"; then
+				ls_log_error "ls_secret_write: asymmetric encryption failed at $secret_key_path"
+				res=1
+			fi
 		done
+		return $res
 	fi
 	if [ -n "$has_hmac" ]; then
 		ls_log_action "ls_secret_write: Saving secret signature to $secret_hmac_path"
-		ls_secret_hmac "$1" "$secret_key" >"$secret_hmac_path"
+		lcaol secret_hmac_path_tmp
+		secret_hmac_path_tmp=$(ls_mkstemp)
+		if ! ls_try_write "$secret_hmac_path_tmp" "$secret_hmac_path" ls_secret_hmac "$1" "$secret_key" >"$secret_hmac_path_tmp"; then
+			ls_log_error "ls_secret_write: Writing hmac failed at $secret_key_path"
+			res=1
+		fi
 	fi
 	echo "$secret_path"
+	return $res
 }
 
 function ls_secret_add { # NAME VALUE PUBKEY? ENCKEY?

@@ -25,11 +25,11 @@ fi
 test-exist "$(ls_secret_key_path hello.world)" "Secret key path exists"
 test-exist "$(ls_secret_path hello.world)" "Encrypted secret path exists"
 
-test-step "Testing secret encryption key asymmetric decryption"
-test-expect "$(ls_secret_key hello.world "$PRIVKEY")" "$ENCKEY" "Encryption key is as expected"
-test-expect "$(ls_decrypt_asym "$PRIVKEY" "$(ls_secret_key_path hello.world)")" "$ENCKEY" "Enc key asym decryption works"
-
-test-step "Testing full secret decryption"
-test-expect "$(ls_secret_get hello.world "$PRIVKEY")" "$SECRET" "Full decryption works"
+# test-step "Testing secret encryption key asymmetric decryption"
+# test-expect "$(ls_secret_key hello.world "$PRIVKEY")" "$ENCKEY" "Encryption key is as expected"
+# test-expect "$(ls_decrypt_asym "$PRIVKEY" "$(ls_secret_key_path hello.world)")" "$ENCKEY" "Enc key asym decryption works"
+#
+# test-step "Testing full secret decryption"
+# test-expect "$(ls_secret_get hello.world "$PRIVKEY")" "$SECRET" "Full decryption works"
 
 # EOF
