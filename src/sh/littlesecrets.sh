@@ -8,6 +8,8 @@
 # (c) LittleWorshop Ltd, 2025, BSD 3-Clause License
 
 # TODO: We should never check if the key a path by using -f, this will leak the key to the OS
+# TODO: Use `-A` in base64 to suppress trailing newline
+# TODO: Add a signature option to validate the original secret
 
 # --
 # A simplified, reduced version of LittleSecrets that works only with
@@ -125,7 +127,7 @@ function ls_log_tip {
 }
 
 function ls_log_error {
-	ls_log "${RED}!!! ERR ${BOLD}$*"
+	ls_log "${RED} ! ERR ${BOLD}$*"
 	return 0
 }
 
@@ -1307,6 +1309,17 @@ function ls_secret_key { # SECRET PRIVKEY?
 	fi
 }
 
+# Function: ls_secret_hmac_key KEY?
+# Transforms the given key into a HMAC-able key, essentially
+# converting it to b64.
+function ls_secret_hmac_key {
+	if [ -z "${1:-}" ]; then
+		ls_decode </dev/stdin | openssl base64 -A
+	else
+		echo -n "${1}" | ls_decode | openssl base64 -A
+	fi
+}
+
 # Function: ls_secret_hmac
 # Calculates the HMAC for the given secret
 function ls_secret_hmac { #SECRET KEY?
@@ -1317,9 +1330,9 @@ function ls_secret_hmac { #SECRET KEY?
 	# FIXME: Apparently we should compute the HMAC with a different key?
 	# NOTE: Here the key is base64 encoded as otherwise we get null byte errors.
 	if [ "$1" == "-" ]; then
-		cat /dev/stdin | ls_hmac "$(echo -n "$secret_key" | ls_decode | openssl base64 -A)"
+		cat /dev/stdin | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
 	else
-		ls_secret_get "$1" | ls_hmac "$(echo -n "$secret_key" | ls_decode | openssl base64 -A)"
+		ls_secret_get "$1" | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
 	fi
 }
 
@@ -1555,7 +1568,11 @@ function ls_secret_export {
 			if [ "$envname" == "$secname" ]; then
 				envname="$(echo "${envname//./_}" | tr 'a-z' 'A-Z')"
 			fi
-			if ! secval=$(ls_secret_get "$secname"); then
+
+			if ! ls_secret_verify "$secname"; then
+				ls_log_error "Could not validate secret authentiticy: $secname"
+				echo "# Unable to validate secret authenticity: $secname"
+			elif ! secval=$(ls_secret_get "$secname"); then
 				ls_log_error "Unable to retrieve secret: $secname"
 				echo "# Unable to retrieve secret: $secname"
 			else

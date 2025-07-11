@@ -8,8 +8,8 @@ The core cryptography works as such:
 - The user can grant other user's access to the secret by decrypting the secret's encryption key,
   and encrypting it with the other user's SSH public key.
 - A secret can be revoked by removing the encrypted secret, or re-encrypting it.
-- A secret can have an associated HMAC signature using the secret as the
-  message and the secret encryption key in base64 as the key.
+- A secret can have an associated HMAC signature using the decrypted secret as the
+  message and the secret encryption key in base64 as the key. This ensures integrity.
 
 Note that:
 
@@ -74,5 +74,19 @@ openssl pkeyutl -encrypt -pubin -inkey "$PUBLIC_KEY_PATH" -in "$SECRET_ENC_KEY_P
 
 # Outputs the decrypted secret using the given OpenSSL/RSA private key
 openssl pkeyutl -decrypt -inkey "$PRIVATE_KEY_PATH" -in "$SECRET_ENC_KEY_PATH" -out /dev/stdout
+```
+
+The HMAC integrity validation works using the decrypted *secret* and the
+*secret encryption key*, both are binary data.
 
 ```
+# Computes a base64 version of the encryption key so that it can be HMAC'ed
+SECRET_HMAC_KEY="$(echo -n "$SECRET_ENC_KEY" | openssl base64 -A)"
+
+# Computes the HMAC of the secret (decrypted) using the HMAC key.
+SECRET_HMAC=$(echo -n "$SECRET" | openssl dgst -sha256 -hmac "$1" | cut -d' ' -f2)"
+```
+
+Note that in the shell based implementation we:
+- Temporary files are set with strict modes (`600`) and are cleaned up
+- Avoid passing secrets in the command arguments or in the environment, to ensure there's no leaking.

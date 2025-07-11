@@ -481,11 +481,11 @@ function test-empty {
 
 function test-noempty {
 	local value="$1"
-	local failure="${2:-}"
+	local message="${2:-}"
 	if [ -z "$value" ]; then
-		test-fail "$failure"
+		test-fail "$message"
 	else
-		test-ok
+		test-ok "$message"
 	fi
 }
 function test-data {
@@ -595,6 +595,10 @@ function test_log_separator {
 
 function test_log_message {
 	test_log "${BLUE}... ${DIM}$@"
+}
+
+function test_log_output {
+	test_log "${GRAY} =  ${DIM}$@"
 }
 
 function test_log_success {
