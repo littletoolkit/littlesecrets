@@ -7,16 +7,17 @@ source "$BASE/src/sh/littlesecrets.sh"
 # and key
 SECRET_ENC="Hello, World!"
 SECRET_KEY="my-secret-key"
+SECRET_KEY_HEX="$(printf '%s' "$SECRET_KEY" | xxd -p -c 64)"
 
 test-start
 
 test-step "HMAC Encoding"
-HMAC=$(echo -n "$SECRET_ENC" | ls_hmac "$SECRET_KEY")
+HMAC=$(echo -n "$SECRET_ENC" | ls_hmac "$SECRET_KEY_HEX")
 test-noempty "$HMAC" "HMAC command returns non-empty value"
 test_log_output "HMAC=$HMAC"
 
 test-step "HMAC Encoding Stability"
-HMAC_2=$(echo -n "$SECRET_ENC" | ls_hmac "$SECRET_KEY")
+HMAC_2=$(echo -n "$SECRET_ENC" | ls_hmac "$SECRET_KEY_HEX")
 test_log_output "HMAC=$HMAC_2"
 test-expect "$HMAC" "$HMAC_2" "HMAC returns the same output when called twice"
 
@@ -24,6 +25,7 @@ test-expect "$HMAC" "$HMAC_2" "HMAC returns the same output when called twice"
 test-step "Secret Key to HMAC key"
 SECRET_HMAC_KEY="$(ls_secret_hmac_key "$SECRET_KEY")"
 test-expect-different "$SECRET_KEY" "$SECRET_HMAC_KEY"
+test-expect-different "$SECRET_KEY_HEX" "$SECRET_HMAC_KEY"
 
 test-step "ls_secret_hmac transparency"
 HMAC_0=$(echo -n "$SECRET_ENC" | ls_hmac "$SECRET_HMAC_KEY")

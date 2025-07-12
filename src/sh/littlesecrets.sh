@@ -711,33 +711,20 @@ function ls_encrypt_sym_NEW2 { # KEY
 	return "$res"
 }
 
-# --
-# Generates the signature for the given key
-function ls_hmac_NEW { # KEY
-	local res=0
-	local HMAC_KEY=""
+# Function: ls_hmac KEY
+# Calculates the hmac value of the given secret, typically used with the
+# secret key.
+# - Should be in hex (xxd) format
+# - Key will be leaked to /proc, so should not be a secret
+# - Use `ls_hmac_key` to pre-process your key
+function ls_hmac {
 	ls_log_output_start
-	# Use env variable to pass key (doesn't show in cmdline)
-	if ! {
-		HMAC_KEY="$1" bash -c 'openssl dgst -sha256 -hmac "$HMAC_KEY"' | cut -d' ' -f2
-	}; then
-		res=1
-		ls_log_error "ls_hmac: Could not generate secret HMAC [$?]"
-	else
-		echo -n "$HMAC_KEY"
-	fi
-	ls_log_output_end
-	return $res
-}
-
-# Function: ls_hmac
-# Calculates the hmac value of the given secret
-function ls_hmac { # KEY
-	ls_log_output_start
-	if [ -z "$1" ]; then
+	local key="${1:-}"
+	if [ -z "$key" ]; then
 		ls_log_error "ls_hmac: Given key is empty"
 		return 1
-	elif ! openssl dgst -sha256 -hmac "$1" | cut -d' ' -f2; then
+	elif ! openssl mac -macopt hexkey:"$key" -digest sha256 hmac | cut -d' ' -f2; then
+
 		ls_log_error "ls_hmac: Could not generate secret HMAC"
 	fi
 	ls_log_output_end
@@ -1310,13 +1297,13 @@ function ls_secret_key { # SECRET PRIVKEY?
 }
 
 # Function: ls_secret_hmac_key KEY?
-# Transforms the given key into a HMAC-able key, essentially
-# converting it to b64.
+# Transforms the given key into a HMAC-able key, calculating its SHA256
+# hash, and returning it as encoded to preserve entropy.
 function ls_secret_hmac_key {
 	if [ -z "${1:-}" ]; then
-		ls_decode </dev/stdin | openssl base64 -A
+		ls_decode </dev/stdin | openssl dgst -sha256 -binary | xxd -p -c 64
 	else
-		echo -n "${1}" | ls_decode | openssl base64 -A
+		printf '%s' "$1" | ls_decode | openssl dgst -sha256 -binary | xxd -p -c 64
 	fi
 }
 
@@ -1325,10 +1312,12 @@ function ls_secret_hmac_key {
 function ls_secret_hmac { #SECRET KEY?
 	local secret_key="${2:-}"
 	if [ -z "$secret_key" ]; then
-		secret_key="$(ls_secret_key "$1")"
+		if ! secret_key="$(ls_secret_key "$1")"; then
+			ls_log_error "ls_secret_hmac: Could not access secret key"
+			return 1
+		fi
 	fi
-	# FIXME: Apparently we should compute the HMAC with a different key?
-	# NOTE: Here the key is base64 encoded as otherwise we get null byte errors.
+	# The ls_secret_hmac_key will derive a key from the secret
 	if [ "$1" == "-" ]; then
 		cat /dev/stdin | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
 	else
@@ -1714,6 +1703,7 @@ function ls_cli {
 		;;
 	## verify NAMES* Verifies the decrypted secret against the hash
 	"verify")
+		created=()
 		valid=()
 		invalid=()
 		nokey=()
@@ -1722,8 +1712,16 @@ function ls_cli {
 			HMAC_PATH="$(ls_secret_hmac_path "$SECRET_NAME")"
 			echo -n "Verifying $SECRET_NAME… "
 			if [ ! -e "$HMAC_PATH" ]; then
-				nokey+=("$SECRET_NAME")
-				echo "${ORANGE}no hash${RESET}"
+				# NOTE: Leaving this for reference
+				if HMAC=$(ls_secret_hmac "$SECRET_NAME"); then
+					echo "${GREEN}CREATED${RESET}"
+					ls_log_action "Creating HMAC signature for secret: $SECRET_NAME"
+					echo -n "$HMAC" >"$HMAC_PATH"
+					created+=($SECRET_NAME)
+				else
+					nokey+=("$SECRET_NAME")
+					echo "${ORANGE}no hash${RESET}"
+				fi
 			elif [ "$(cat "$HMAC_PATH")" != "$(ls_secret_hmac "$SECRET_NAME")" ]; then
 				ls_log_warning "Existing HMAC differs for secret $SECRET_NAME"
 				ls_log_tip "Most likely the original secret has changed and you haven't been granted the key."
@@ -1737,6 +1735,7 @@ function ls_cli {
 		if [ ${#valid[@]} -ne 0 ]; then ls_log_message "Valid: ${GREEN}${valid[*]}${RESET}"; fi
 		if [ ${#invalid[@]} -ne 0 ]; then ls_log_message "Invalid: ${RED}${invalid[*]}${RESET}"; fi
 		if [ ${#nokey[@]} -ne 0 ]; then ls_log_message "Unverified: ${BLUE}${nokey[*]}${RESET}"; fi
+		if [ ${#created[@]} -ne 0 ]; then ls_log_message "Created: ${GREEN}${created[*]}${RESET}"; fi
 		if [ ${#invalid[@]} -eq 0 ]; then
 			return 0
 		else

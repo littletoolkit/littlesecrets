@@ -10,7 +10,7 @@ SECRET_IV=$(openssl rand -hex 16)
 
 # TODO: We could use the `-binary` option in HMAC instead to store the raw output
 SECRET_ENC=$(echo -n "$SECRET" | openssl aes-256-cbc -md sha512 -salt -pbkdf2 -K "$SECRET_KEY" -iv "$SECRET_IV" -in /dev/stdin -out /dev/stdout)
-SECRET_ENC_HMAC=$(echo -n "$SECRET" | openssl dgst -sha256 -hmac "$(printf '%s' "$SECRET_KEY")")
+SECRET_ENC_HMAC=$(echo -n "$SECRET_ENC" | openssl dgst -sha256 -hmac "$(printf '%s' "$MAC_KEY")")
 
 SECRET_DEC=$(echo -n "$SECRET_ENC" | openssl aes-256-cbc -d -md sha512 -salt -pbkdf2 -K "$SECRET_KEY" -iv "$SECRET_IV" -in /dev/stdin -out /dev/stdout)
 SECRET_DEC_HMAC=$(echo -n "$SECRET_DEC" | openssl dgst -sha256 -hmac "$(printf '%s' "$SECRET_KEY")")
