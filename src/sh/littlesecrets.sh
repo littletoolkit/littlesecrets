@@ -289,6 +289,7 @@ function ls_match { # TEXT EXPR…
 	else
 		# FIXME: This does not seem to work with globs
 		for pattern in "$@"; do
+			# NOTE: Unquoting is on purpose
 			if [[ "$text" == $pattern ]]; then
 				echo "$text"
 				return 0
@@ -922,7 +923,8 @@ function ls_store_init {
 # --
 # Ensures that the store exists
 function ls_store_ensure {
-	local store=$(ls_store)
+	local store
+	store=$(ls_store)
 	if [ -z "$store" ]; then
 		store="$(basename "$LITTLESECRETS_STORE")"
 		mkdir -p "$store"
@@ -1143,6 +1145,10 @@ function ls_secret_keys { # SECRET
 	fi
 }
 
+# Function: ls_try_write TMP DST ACTION
+# Runs `ACTION` (which must return true) and is expected to
+# write to `TMP`. If the action succeeds, then `TMP` is moved
+# to `DST`, otherwise `TMP` is cleaned up.
 function ls_try_write {
 	local path_tmp="$1"
 	local path_dst="$2"
@@ -1163,28 +1169,43 @@ function ls_try_write {
 	fi
 }
 
+# TODO: PUBKEY should be user, maybe?
+#
+# Function: ls_secret_wite SECRET_NAME PUBKEY? SECRET_KEY
+# Writes the secret with the `SECRET_NAME` using the `PUBKEY` and the given
+# `SECRET_KEY`. The user will be inferred from the `PUBKEY`, the secret
+# will be created in the storage, along with its hmac signature if not
+# already there.
 function ls_secret_write { # NAME PUBKEY? SECRETKEY?
-	local secret="$1"
+	local secret_name="$1"
 	local secret_path
-	secret_path="$(ls_store)/secret/$secret/secret.enc"
+	secret_path="$(ls_store)/secret/$secret_name/secret.enc"
 	local secret_hmac_path
-	secret_hmac_path="$(ls_store)/secret/$secret/secret.hmac"
+	secret_hmac_path="$(ls_store)/secret/$secret_name/secret.hmac"
 	local has_hmac
 	has_hmac="$(ls_option hmac)"
-	# This creates the secret key, if it is not given. Not the key is ls_encoded.
+	# This creates the secret key, if it is not given.
+	# NOTE that the key is ls_encoded.
 	local secret_key="${3:-}"
 	if [ -z "$secret_key" ]; then
 		secret_key="$(ls_key)"
 	fi
-	# First step, we encrypt the secret with the secret key
+	# Capture plaintext secret from stdin into memory (avoids temp file exposure)
+	local secret_plain
+	secret_plain="$(cat /dev/stdin)"
+	# Encrypt the secret using the symmetric key
 	ls_log_action "ls_secret_write: Writing encrypted secret to $secret_path"
 	ls_mkparent "$secret_path"
 	local secret_path_tmp
 	secret_path_tmp=$(ls_mkstemp)
-	if ! ls_try_write "$secret_path_tmp" "$secret_path" ls_encrypt_sym "$secret_key" </dev/stdin >"$secret_path_tmp"; then
+	if ! printf '%s' "$secret_plain" | ls_encrypt_sym "$secret_key" >"$secret_path_tmp"; then
 		ls_log_error "ls_secret_write: symmetric encryption failed at $secret_path"
+		ls_unlink "$secret_path_tmp"
+		unset secret_plain
 		return 1
 	fi
+	# Atomically write encrypted secret
+	ls_try_write "$secret_path_tmp" "$secret_path" true
 
 	# Second step, encrypt the secret key for each of the user's host keys
 	local res=0
@@ -1198,11 +1219,12 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 		local user_pubkey
 		user_pubkey=$(echo "${2:-}" | ls_decode)
 		host=$(ls_user_host "" "$2")
-		secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
+		secret_key_path="$(ls_store)/secret/$secret_name/$user@$host.key"
 		secret_key_path_tmp=$(ls_mkstemp)
 		ls_log_action "ls_secret_write: Encrypting secret key to $secret_key_path"
 		if ! ls_try_write "$secret_key_path_tmp" "$secret_key_path" ls_encrypt_asym "$user_pubkey" <(echo "$secret_key") >"$secret_key_path_tmp"; then
 			ls_log_error "ls_secret_write: asymmetric encryption failed at $secret_key_path"
+			unset secret_plain
 			return 1
 		fi
 	else
@@ -1214,12 +1236,13 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 		fi
 		if [ -z "$user_keys" ]; then
 			ls_error "ls_secret_write: No user key found for $user"
+			unset secret_plain
 			return 1
 		fi
 		# Otherwise encrypt for all host keys
 		for pubkey_path in $user_keys; do
 			host=$(basename "$pubkey_path" .pubkey)
-			secret_key_path="$(ls_store)/secret/$secret/$user@$host.key"
+			secret_key_path="$(ls_store)/secret/$secret_name/$user@$host.key"
 			secret_key_path_tmp=$(ls_mkstemp)
 			ls_log_action "ls_secret_write: Encrypting secret key to $secret_key_path"
 			if ! ls_try_write "$secret_key_path_tmp" "$secret_key_path" ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path_tmp"; then
@@ -1227,18 +1250,23 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 				res=1
 			fi
 		done
-		return $res
 	fi
+	# If the HMAC option is enabled, we create/update the HMAC
 	if [ -n "$has_hmac" ]; then
-		ls_log_action "ls_secret_write: Saving secret signature to $secret_hmac_path"
-		local secret_hmac_path_tmp
-		secret_hmac_path_tmp=$(ls_mkstemp)
-		# FIXME: This is not working
-		# if ! ls_try_write "$secret_hmac_path_tmp" "$secret_hmac_path" ls_secret_hmac "$1" "$secret_key" >"$secret_hmac_path_tmp"; then
-		# 	ls_log_error "ls_secret_write: Writing hmac failed at $secret_key_path [$?]"
-		# 	res=1
-		# fi
+		local hmac
+		if ! hmac=$(printf '%s' "$secret_plain" | ls_secret_hmac - "$secret_key"); then
+			ls_log_error "ls_secret_write: Could not compute HMAC for secret: $secret_name"
+			unset secret_plain
+			return 1
+		elif [ ! -e "$secret_hmac_path" ]; then
+			ls_log_action "Creating secret HMAC at: $secret_hmac_path"
+			echo -n "$hmac" >"$secret_hmac_path"
+		elif [ "$(cat "$secret_hmac_path")" != "$hmac" ]; then
+			ls_log_action "Updating secret HMAC at: $secret_hmac_path"
+			echo -n "$hmac" >"$secret_hmac_path"
+		fi
 	fi
+	unset secret_plain
 	echo "$secret_path"
 	return $res
 }
@@ -1251,7 +1279,7 @@ function ls_secret_add { # NAME VALUE PUBKEY? ENCKEY?
 	fi
 }
 
-function ls_secret_key_path { # SECRET USER?
+function ls_secret_key_path { # SECRET USER[@HOST]?
 	local store
 	store="$(ls_store)"
 	local user
@@ -1281,6 +1309,9 @@ function ls_secret_path { # SECRET
 	fi
 }
 
+# --
+# Looks for the secret key for the given secret, decrypting it with the given
+# private key.
 function ls_secret_key { # SECRET PRIVKEY?
 	local user_privkey
 	user_privkey=$(ls_user_privkey "${2:-}" | ls_decode)
@@ -1296,9 +1327,10 @@ function ls_secret_key { # SECRET PRIVKEY?
 	fi
 }
 
-# Function: ls_secret_hmac_key KEY?
+# Function: ls_secret_hmac_key ENC_KEY?
 # Transforms the given key into a HMAC-able key, calculating its SHA256
-# hash, and returning it as encoded to preserve entropy.
+# hash, and returning it as encoded to preserve entropy. The key value is either
+# passed as argument, or read from stding.
 function ls_secret_hmac_key {
 	if [ -z "${1:-}" ]; then
 		ls_decode </dev/stdin | openssl dgst -sha256 -binary | xxd -p -c 64
@@ -1308,9 +1340,13 @@ function ls_secret_hmac_key {
 }
 
 # Function: ls_secret_hmac
-# Calculates the HMAC for the given secret
-function ls_secret_hmac { #SECRET KEY?
+# Calculates the HMAC for the given secret. If secret name is `-` then
+# the secret is read from stdin.
+function ls_secret_hmac { # SECRET_NAME SECRET_ENC_KEY?
+	local secret_name="$1"
 	local secret_key="${2:-}"
+	# If the secret key is not provided, we try to retrieve it -- note that
+	# this used the current USER/HOST.
 	if [ -z "$secret_key" ]; then
 		if ! secret_key="$(ls_secret_key "$1")"; then
 			ls_log_error "ls_secret_hmac: Could not access secret key"
@@ -1318,7 +1354,7 @@ function ls_secret_hmac { #SECRET KEY?
 		fi
 	fi
 	# The ls_secret_hmac_key will derive a key from the secret
-	if [ "$1" == "-" ]; then
+	if [ "$secret_name" == "-" ]; then
 		cat /dev/stdin | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
 	else
 		ls_secret_get "$1" | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
@@ -1393,16 +1429,18 @@ function ls_secret_verify { # NAME PRIVEY?
 	fi
 }
 
-function ls_secret_remove { # SECRET
+# Function: ls_secret_remove SECRET
+# Removes *all* the files associated with the given secret, and clears the
+# directory.
+function ls_secret_remove {
 	local store
 	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 	local secret_path="$store/secret/$1"
 	if [ -e "$secret_path" ]; then
+		ls_log_action "Removing secret files: $(env -C "$secret_path" find . -name "*.*")"
 		rm -rf "$secret_path"
-		return 0
 	fi
-	return 1
 }
 
 function ls_secret_grant { # SECRET USER_EXPR
@@ -1610,7 +1648,7 @@ function ls_cli {
 			ls_cli version
 			return 0
 			;;
-		-* | --*)
+		--* | -*)
 			ls_log_error "Unknown option $1"
 			return 1
 			;;
@@ -1660,8 +1698,12 @@ function ls_cli {
 		if [ -z "${1:-}" ]; then
 			ls_log_error "get: Missing secret name"
 			return 1
-		fi
-		if [ -n "$(ls_option hmac)" ] && ! ls_secret_verify "$1"; then
+		elif ! ls_secret_path "$1" >/dev/null; then
+			ls_log_error "Secret does not exist: $1"
+			# TODO: Should find approximate matches
+			return 1
+
+		elif [ -n "$(ls_option hmac)" ] && ! ls_secret_verify "$1"; then
 			ls_log_error "Secret signature differs: $1"
 			ls_log_tip "Secret likely has been updated and your key is out of date"
 			return 1
@@ -1717,7 +1759,7 @@ function ls_cli {
 					echo "${GREEN}CREATED${RESET}"
 					ls_log_action "Creating HMAC signature for secret: $SECRET_NAME"
 					echo -n "$HMAC" >"$HMAC_PATH"
-					created+=($SECRET_NAME)
+					created+=("$SECRET_NAME")
 				else
 					nokey+=("$SECRET_NAME")
 					echo "${ORANGE}no hash${RESET}"
@@ -1725,10 +1767,10 @@ function ls_cli {
 			elif [ "$(cat "$HMAC_PATH")" != "$(ls_secret_hmac "$SECRET_NAME")" ]; then
 				ls_log_warning "Existing HMAC differs for secret $SECRET_NAME"
 				ls_log_tip "Most likely the original secret has changed and you haven't been granted the key."
-				invalid+=($SECRET_NAME)
+				invalid+=("$SECRET_NAME")
 				echo "${RED}INVALID${RESET}"
 			else
-				valid+=($SECRET_NAME)
+				valid+=("$SECRET_NAME")
 				echo "${GREEN}OK${RESET}"
 			fi
 		done

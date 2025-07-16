@@ -103,7 +103,6 @@ And some more general caveats for security:
 - The CLI tool does not do strong input validation, it's meant to be run by
   yourself directly.
 
-
 ## References
 
 Papers & Articles:
