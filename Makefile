@@ -6,7 +6,7 @@ all: test test docs
 
 .PHONY: test
 test:
-	@if bash tests/harness.sh; then;
+	@if bash tests/harness.sh; then
 		echo "... All tests passed"
 	else
 		echo "!!! ERR Some tests failed"
