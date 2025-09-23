@@ -682,7 +682,9 @@ function ls_key {
 
 # --
 function ls_encrypt_sym { # KEY
-	local key=$(echo "$1" | ls_decode)
+	local key_path=$(ls_mkstemp "$1")
+	local key
+	key=$(cat "$key_path")
 	key="${key//[[:space:]]/}"  # Trim whitespace
 	ls_log_output_start
 	if ! {
@@ -722,7 +724,9 @@ function ls_hmac {
 # decrypted secrets (unencoded)
 function ls_decrypt_sym { # KEY
 	local res=0
-	local key=$(echo "$1" | ls_decode)
+	local key_path=$(ls_mkstemp "$1")
+	local key
+	key=$(cat "$key_path")
 	key="${key//[[:space:]]/}"  # Trim whitespace
 	ls_log_output_start
 	if ! {
