@@ -70,6 +70,7 @@ else
 	BLUE_LT=""
 	GREEN=""
 	YELLOW=""
+	GRAY=""
 	GOLD=""
 	GOLD_DK=""
 	PURPLE_DK=""
