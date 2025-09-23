@@ -15,17 +15,18 @@ LittleSecrets' design is based on the *Secure and convenient secret management
 in distributed computer systems* paper by Blazej Adamczyk, and relies primarily
 on RSA keypairs and AES-256-CBC with PBKDF2 for encryption.
 
-## Use Cases
+## Quick Start
 
-- Managing secrets in your personal homelab, for instance having `dotsecrets`
-  repository where you centralise your secrets and grant access to specific
-  machines and users.
+You can install like so, you'll need Bash, OpenSSL, Coreutils and a POSIX
+system.
 
-- Sharing secrets in a team, by either storing secrets in a shared repository,
-  or storing secrets directly in your codebase repository, registering human user
-  and machine users, granting and revoking access.
+```
+curl -o littlesecrets https://raw.githubusercontent.com/littletoolkit/littlesecrets/refs/heads/main/src/sh/littlesecrets.sh
+chmod +x littlesecrets
+mv littlesecrets ~/.local/bin
+```
 
-In a nutshell, the process is like so:
+and then
 
 ```bash
 # Create a repository
@@ -46,6 +47,17 @@ littlesecret register alice alice.rsa.pubkey
 # Grant access to the secret
 littlesecret grant my.little.secret alice
 ```
+
+## Use Cases
+
+- Managing secrets in your personal homelab, for instance having a `dotsecrets`
+  repository where you centralise your secrets and grant access to specific
+  machines and users. You can clone it to `~/.littlesecrets/` and sync it
+  across devices.
+
+- Sharing secrets in a team, by either storing secrets in a shared repository,
+  or storing secrets directly in your codebase repository, registering human user
+  and machine users, granting and revoking access.
 
 `littlesecrets` is primarily intended to be used as a devops CLI tool, however
 the store can easily be accessed and decrypted using common programming
@@ -121,4 +133,5 @@ Related tools, compared to LittleSecrets:
 
 - [age](https://github.com/FiloSottile/age): age is a lower-level encryption tool, which we could use in lieu of the RSA/AES combo, however, this would require encrypting the secret for each user, therefore taking more space and requiring proof of the secret's original value, while also limiting the ability to decrypt to platform that have age implemented.
 
+- [dotenvx](https://dotenvx.com/docs/quickstart/encryption): allows to encrypt your `.env` file, which is convenience but lacks the granularity of `littlesecrets`, where you encrypt (and grant) each secret independently.
 

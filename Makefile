@@ -1,4 +1,4 @@
-REQUIRE_BIN=pandoc
+REQUIRE_BIN=pandoc shellcheck
 
 .PHONY: all
 all: test test docs
@@ -64,6 +64,14 @@ dist/docs/littlesecrets.1: docs/manual.md
 		exit 1
 	fi
 	pandoc docs/manual.md -s -t man -o "$@"
+
+.PHONY: check
+check:
+	@if ! which shellcheck 2> /dev/null; then \
+		echo "!!! ERR Cannot find 'shellcheck'"; \
+		exit 1; \
+	fi
+	@find . -name "*.sh" -exec shellcheck {} \;
 
 .PHONY: clean
 clean:

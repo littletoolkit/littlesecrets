@@ -32,13 +32,12 @@ function ls_encrypt_sym { # KEY
 function ls_decrypt_sym { # KEY
     local key_path=$(ls_mkstemp "$1")
     # Extract ciphertext, IV, and tag from stdin (encoded)
-    local ciphertext=$(sed -E 's/@LS://;s/(.{44}).*/\\1/g' | tr -d '\\n' | ls_decode)
-    local iv=$(tail -n +2 | head -n 1 | sed -E 's/@LS://g' | tr -d '\\n' | ls_decode)
-    local tag=$(tail -n +3 | sed -E 's/@LS://g' | tr -d '\\n' | ls_decode)
-
-    local ciphertext_path=$(ls_mkstemp "$ciphertext")
-    local iv_path=$(ls_mkstemp "$iv")
-    local tag_path=$(ls_mkstemp "$tag")
+    local ciphertext_path=$(ls_mkstemp)
+    sed -E 's/@LS://;s/(.{44}).*/\\1/g' | tr -d '\\n' | ls_decode >"$ciphertext_path"
+    local iv_path=$(ls_mkstemp)
+    tail -n +2 | head -n 1 | sed -E 's/@LS://g' | tr -d '\\n' | ls_decode >"$iv_path"
+    local tag_path=$(ls_mkstemp)
+    tail -n +3 | sed -E 's/@LS://g' | tr -d '\\n' | ls_decode >"$tag_path"
 
     ls_log_output_start
 
