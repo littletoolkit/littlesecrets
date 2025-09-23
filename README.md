@@ -1,10 +1,12 @@
 ```
- _ _ _   _   _      __                    _
-| (_) |_| |_| | ___/ _\ ___  ___ _ __ ___| |_ ___
-| | | __| __| |/ _ \ \ / _ \/ __| '__/ _ \ __/ __|
-| | | |_| |_| |  __/\ \  __/ (__| | |  __/ |_\__ \
-|_|_|\__|\__|_|\___\__/\___|\___|_|  \___|\__|___/
-```
+  _ _ _   _   _      __                    _
+ | (_) |_| |_| | ___/ _\ ___  ___ _ __ ___| |_ ___
+ | | | __| __| |/ _ \ \ / _ \/ __| '__/ _ \ __/ __|
+ | | | |_| |_| |  __/\ \  __/ (__| | |  __/ |_\__ \
+ |_|_|\__|\__|_|\___\__/\___|\___|_|  \___|\__|___/
+ ```
+
+[![CI](https://github.com/littletoolkit/littlesecrets/actions/workflows/test.yml/badge.svg)](https://github.com/littletoolkit/littlesecrets/actions/workflows/test.yml)
 
 *LittleSecrets* is secret sharing tool that can be used for
 distributing secrets across machines and users, while safely storing the

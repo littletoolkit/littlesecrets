@@ -35,5 +35,7 @@ if test-end; then
 	echo "${GREEN}EOK${RESET}"
 else
 	echo "${RED}EFAIL${RESET}"
+	test_cleanup
+	exit 1
 fi
 # EOF

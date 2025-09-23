@@ -6,7 +6,14 @@ all: test test docs
 
 .PHONY: test
 test:
-	@bash tests/harness.sh
+	@if bash tests/harness.sh; then;
+		echo "... All tests passed"
+	else
+		echo "!!! ERR Some tests failed"
+		exit 1
+	fi
+
+
 
 define sh-install
 	PREFIX="$(if $(PREFIX),$(PREFIX),$(if $(HOME),$(HOME)/.local,/usr/local))"
@@ -71,7 +78,7 @@ check:
 		echo "!!! ERR Cannot find 'shellcheck'"; \
 		exit 1; \
 	fi
-	@find . -name "*.sh" -exec shellcheck {} \;
+	find . -name "*.sh" -exec shellcheck {} \;
 
 .PHONY: clean
 clean:
