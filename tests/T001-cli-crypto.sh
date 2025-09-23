@@ -19,8 +19,9 @@ test-expect "$KEY" $(echo -n "$KEY" | ls_encode | ls_decode) "Value decoded"
 
 # Asserts the transparent of symmetric encoding
 test-step "Symmetric Encryption transparency"
-SECRET_ENC=$(echo -n "$SECRET" | test-expect-success ls_encrypt_sym "$KEY")
-SECRET_DEC=$(echo -n "$SECRET_ENC" | test-expect-success ls_decrypt_sym "$KEY")
+KEY_ENC=$(echo -n "$KEY" | ls_encode)
+SECRET_ENC=$(echo -n "$SECRET" | test-expect-success ls_encrypt_sym "$KEY_ENC")
+SECRET_DEC=$(echo -n "$SECRET_ENC" | test-expect-success ls_decrypt_sym "$KEY_ENC")
 test-expect "$SECRET_DEC" "$SECRET" "Secret symmetrically decoded"
 
 test-step "Asymmetric Keypair"

@@ -57,13 +57,17 @@ dist/docs/manual.html: docs/manual.md
 	fi
 	pandoc docs/manual.md -s --toc -c style.css -o "$@"
 
-dist/docs/littlesecrets.1:
+dist/docs/littlesecrets.1: docs/manual.md
 	@mkdir -p "$(dir $@)"
 	if ! which pandoc 2> /dev/null; then
 		echo "!!! ERR Cannot find 'pandoc'"
 		exit 1
 	fi
 	pandoc docs/manual.md -s -t man -o "$@"
+
+.PHONY: clean
+clean:
+	rm -rf dist build
 
 .ONESHELL:
 

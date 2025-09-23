@@ -18,13 +18,13 @@ LittleSecrets is a secure secrets management tool designed for individual and te
 **Team Secret Sharing**
 : Enables secure secret sharing amongst team members using their existing SSH keypairs - no need for new authentication systems.
 
-**Flexible Storage**
-: Secrets can be safely stored on any backend: local filesystem, Git repository, file archive, SQLite database, or cloud services like AWS Secrets Manager.
+**Local Storage**
+: Secrets are stored in a local directory structure, making it git-friendly for version control and audit trails.
 
 **Strong Encryption**
 : Uses industry-standard cryptography:
-- Secrets are encrypted with AES-256-GCM using random keys
-- Each secret's encryption key is then encrypted with RSA-4096 (using each authorized user's public key)
+- Secrets are encrypted with AES-256-CBC using random keys
+- Each secret's encryption key is then encrypted with RSA (default 2048-bit, configurable to 4096-bit using each authorized user's public key)
 - Supports both OpenSSH and OpenSSL key formats
 - No shared passwords or master keys required
 
@@ -76,7 +76,7 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **register** [*USER[@HOST]*] [*KEY*]
 : Register a user's public key for a specific host. If HOST is not specified, uses LITTLESECRETS_HOST.
 
-**deregister** *USER[@HOST]*] [*KEY*]
+**deregister** *USER[@HOST]* [*KEY*]
 : De-register a user's public key from a specific host
 
 **users** [*EXPR*...]
@@ -84,6 +84,15 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 
 **access** [*EXPR*...]
 : List users with access to secrets. If EXPR is provided, only show secrets matching the expressions. Format is "secret:user1@host1 user2@host2 ..."
+
+**hash** *NAMES*...
+: Ensures the secrets have a matching HMAC hash
+
+**verify** *NAMES*...
+: Verifies the decrypted secret against the stored HMAC hash
+
+**export** [*VAR=secret*...]
+: Exports the given secrets as shell environment variables
 
 # ENVIRONMENT
 
@@ -99,15 +108,18 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **LITTLESECRETS_STORE**
 : Path to the secrets store (defaults to .littlesecrets)
 
+**LITTLESECRETS_OPTIONS**
+: Comma-separated list of options (default: hmac)
+
 # FILES
 
 *.littlesecrets/*
 : Default location of the secrets store
 
-*.littlesecrets/secrets/*
-: Directory containing encrypted secrets
+*.littlesecrets/secret/*
+: Directory containing encrypted secrets, HMAC signatures, and encrypted keys
 
-*.littlesecrets/users/*
+*.littlesecrets/user/*
 : Directory containing user public keys, organized by user/host (e.g., alice/laptop.pubkey)
 
 # EXAMPLES
@@ -148,6 +160,18 @@ Grant access to specific machines:
 ```
 littlesecrets grant api.key bob@laptop     # only bob's laptop
 littlesecrets grant api.key bob            # all of bob's machines
+```
+
+Verify secret integrity:
+```
+littlesecrets verify db.password          # verify specific secret
+littlesecrets verify                      # verify all secrets
+```
+
+Export secrets as environment variables:
+```
+littlesecrets export DB_PASS=db.password API_KEY=api.key
+# Outputs: export DB_PASS='secretvalue'; export API_KEY='keyvalue'
 ```
 
 # EXIT STATUS
