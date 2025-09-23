@@ -684,12 +684,10 @@ function ls_key {
 # --
 function ls_encrypt_sym { # KEY
 	local key_path=$(ls_mkstemp "$1")
-	local key
-	key=$(cat "$key_path")
-	key="${key//[[:space:]]/}"  # Trim whitespace
 	ls_log_output_start
 	if ! {
-		exec 3<<<"$key"
+		# NOTE: The fd anonymises the key path
+		exec 3<"$key_path"
 		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass fd:3
 		local openssl_res=$?
 		exec 3<&-
@@ -698,6 +696,7 @@ function ls_encrypt_sym { # KEY
 		ls_log_error "ls_encrypt_sym: Could not encrypt secret"
 	fi
 	ls_log_output_end
+	unlink "$key_path"
 }
 
 # Function: ls_hmac KEY
@@ -709,7 +708,7 @@ function ls_encrypt_sym { # KEY
 function ls_hmac {
 	ls_log_output_start
 	local key="${1:-}"
-	key="${key//[[:space:]]/}"  # Trim whitespace
+	key="${key//[[:space:]]/}" # Trim whitespace
 	if [ -z "$key" ]; then
 		ls_log_error "ls_hmac: Given key is empty"
 		return 1
@@ -726,12 +725,8 @@ function ls_hmac {
 function ls_decrypt_sym { # KEY
 	local res=0
 	local key_path=$(ls_mkstemp "$1")
-	local key
-	key=$(cat "$key_path")
-	key="${key//[[:space:]]/}"  # Trim whitespace
-	ls_log_output_start
 	if ! {
-		exec 3<<<"$key"
+		exec 3<"$key_path"
 		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass fd:3
 		local openssl_res=$?
 		exec 3<&-
@@ -741,7 +736,8 @@ function ls_decrypt_sym { # KEY
 		ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$res]"
 	fi
 	ls_log_output_end
-	return $res
+	unlink "$key_path"
+	return "$res"
 }
 
 # --
