@@ -57,7 +57,7 @@ TEST_EXPECT_FAILURE=""
 
 # --
 # ## Color library
-if [ -z "${NOCOLOR:-}" ]; then
+if [ -z "${NOCOLOR:-}" ] && [ -n "${TERM:-}" ] && tput setaf 1 &>/dev/null; then
 	CYAN="$(tput setaf 33)"
 	BLUE_DK="$(tput setaf 27)"
 	BLUE="$(tput setaf 33)"
@@ -76,7 +76,7 @@ if [ -z "${NOCOLOR:-}" ]; then
 	DIM="$(tput dim)"
 	REVERSE="$(tput rev)"
 	RESET="$(tput sgr0)"
-elif tput setaf 1 &>/dev/null; then
+else
 	CYAN=""
 	BLUE_DK=""
 	BLUE=""
