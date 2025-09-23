@@ -270,11 +270,10 @@ function ls_cleanup {
 }
 
 function ls_ispath { ## PATHLIKE
-	if [[ "${1:-}" =~ / ]]; then
+	if [[ "${1:-}" =~ / ]] || [[ "${1:-}" != @LS:* ]]; then
 		return 0
 	else
-		# FIXME: This should return 1 and work for paths with no /
-		return 0
+		return 1
 	fi
 }
 
@@ -692,26 +691,6 @@ function ls_encrypt_sym { # KEY
 	unlink "$key_path"
 }
 
-function ls_encrypt_sym_NEW2 { # KEY
-	local res=0
-	local key="$1"
-	ls_log_output_start
-	# Use a file descriptor to pass the key without writing to disk
-	if ! {
-		# Open fd 3 for reading from a here-string
-		exec 3<<<"$key"
-		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass fd:3
-		local openssl_res=$?
-		exec 3<&- # Close fd 3
-		return $openssl_res
-	}; then
-		res=1
-		ls_log_error "ls_encrypt_sym: Could not encrypt secret [$?]"
-	fi
-	ls_log_output_end
-	return "$res"
-}
-
 # Function: ls_hmac KEY
 # Calculates the hmac value of the given secret, typically used with the
 # secret key.
@@ -749,29 +728,6 @@ function ls_decrypt_sym { # KEY
 	return $res
 }
 
-function ls_decrypt_sym_NEW { # KEY
-	local res=0
-	local key="$1"
-
-	ls_log_output_start
-	# Use a file descriptor to pass the key without writing to disk
-	# Create a pipe and write the key to it
-	if ! {
-		# Open fd 3 for reading from a here-string
-		exec 3<<<"$key"
-		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass fd:3
-		local openssl_res=$?
-		exec 3<&- # Close fd 3
-		return $openssl_res
-	}; then
-		res=1
-		ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$?]"
-	fi
-	key=""
-	ls_log_output_end
-	return "$res"
-}
-
 # --
 # Encrypts the given secret using the given public key. When the key is empty
 # it will be sourced using `ls_pubkey`, otherwise it can be given either
@@ -802,38 +758,6 @@ function ls_encrypt_asym { # PUBKEY? PATH?
 	return $res
 }
 
-function ls_encrypt_asym_NEW { # PUBKEY? PATH?
-	local pubkey="${1:-}"
-	local secret_path="${2:-/dev/stdin}"
-	local pubkey_path=
-	local pubkey_from_fd=0
-	local res=0
-
-	if [ -z "$pubkey" ]; then
-		pubkey_path="$(ls_pubkey_path)"
-	elif [ -e "$pubkey" ]; then
-		pubkey_path="$pubkey"
-	else
-		# Public key is a string, use file descriptor
-		exec 3<<<"$pubkey"
-		pubkey_path="/dev/fd/3"
-		pubkey_from_fd=1
-	fi
-
-	ls_log_output_start
-	if ! openssl pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out /dev/stdout; then
-		res=1
-		ls_log_error "ls_encrypt_asym: Could not asymmetrically encrypt secret"
-	fi
-	ls_log_output_end
-
-	if [ "$pubkey_from_fd" == 1 ]; then
-		exec 3<&- # Close fd 3
-	fi
-
-	return $res
-}
-
 # --
 # Decrypts the given encrypted secret using the given private key. When the key is empty
 # it will be sourced using `ls_privkey`, otherwise it can be given either
@@ -861,38 +785,6 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	if [ "$privkey_temp" == 1 ]; then
 		unlink "$privkey_path"
 	fi
-	return $res
-}
-
-function ls_decrypt_asym_NEW { # PRIVKEY? PATH?
-	local privkey="${1:-}"
-	local secret_path="${2:-/dev/stdin}"
-	local privkey_path=
-	local privkey_from_fd=0
-	local res=0
-
-	if [ -z "$privkey" ]; then
-		privkey_path="$(ls_privkey_path)"
-	elif [ -e "$privkey" ]; then
-		privkey_path="$privkey"
-	else
-		# Private key is a string, use file descriptor
-		exec 3<<<"$privkey"
-		privkey_path="/dev/fd/3"
-		privkey_from_fd=1
-	fi
-
-	ls_log_output_start
-	if ! openssl pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out /dev/stdout; then
-		res=$? # Fixed: was res=$1
-		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$res]"
-	fi
-	ls_log_output_end
-
-	if [ "$privkey_from_fd" == 1 ]; then
-		exec 3<&- # Close fd 3
-	fi
-
 	return $res
 }
 

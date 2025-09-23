@@ -1,6 +1,3 @@
-Fix:
-- Ensure that when creating a secret, the HMAC is created as well
-
 Test:
 - SSH key passphrase protection workflow
 
