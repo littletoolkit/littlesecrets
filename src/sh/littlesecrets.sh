@@ -1269,6 +1269,37 @@ function ls_secret_hmac_path { #SECRET
 	echo "$(ls_secret_path "$1")/secret.hmac"
 }
 
+function ls_secret_ensure { # NAME
+	if [ -z "${1:-}" ]; then
+		ls_log_error "ensure: Missing secret name"
+		return 1
+	fi
+	# Check if secret already exists (check the path, not access)
+	if ls_secret_path "$1" >/dev/null 2>&1; then
+		# Secret exists, check if user has access by trying to get the secret
+		# We redirect stderr to avoid showing error messages during the check
+		if ! ls_secret_get "$1" >/dev/null 2>&1; then
+			ls_log_error "ensure: Secret '$1' exists but you don't have access to it"
+			return 1
+		fi
+		# Secret exists and user has access, return success
+		return 0
+	else
+		# Secret doesn't exist, create a new random secret (16 ASCII chars)
+		ls_log_action "ensure: Creating new random secret: $1"
+		local random_secret
+		# Generate 16 random ASCII characters (alphanumeric)
+		# Use more base64 data to ensure we get 16 chars after filtering
+		random_secret=$(openssl rand -base64 20 | tr -d '=+/' | tr -d '\\n' | cut -c1-16)
+		if [ -z "$random_secret" ]; then
+			ls_log_error "ensure: Failed to generate random secret"
+			return 1
+		fi
+		ls_secret_add "$1" "$random_secret"
+		return $?
+	fi
+}
+
 function ls_secret_get { # NAME PRIVKEY?
 	# We locate the secret
 	local secret="$1"
@@ -1755,6 +1786,11 @@ function ls_cli {
 		ls_secret_export "$@"
 		return $?
 		;;
+	## ensure <name>      Ensure a secret exists (create if missing)
+	"ensure")
+		ls_secret_ensure "$@"
+		return $?
+		;;
 	*)
 		if [ -n "$cmd" ]; then
 			ls_log_error "Unknown command: '$cmd'"
@@ -1762,6 +1798,7 @@ function ls_cli {
 		ls_cli --help
 		return 1
 		;;
+
 	esac
 }
 
