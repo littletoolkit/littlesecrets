@@ -1155,7 +1155,7 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 			user_keys=$(ls_user_list_keys "$user")
 		fi
 		if [ -z "$user_keys" ]; then
-			ls_error "ls_secret_write: No user key found for $user"
+			ls_log_error "ls_secret_write: No user key found for $user"
 			unset secret_plain
 			return 1
 		fi

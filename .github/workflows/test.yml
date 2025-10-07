@@ -13,5 +13,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Ensure SSH directory exists
+      run: mkdir -p ~/.ssh
+
+    - name: Generate SSH key if not exists
+      run: |
+        if [ ! -f ~/.ssh/id_rsa ]; then
+          ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
+        fi
+
     - name: Run tests
       run: make test
