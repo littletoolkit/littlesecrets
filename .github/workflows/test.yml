@@ -22,11 +22,14 @@ jobs:
           ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
         fi
 
-    - name: Install littlesecrets CLI
-      run: make install-link PREFIX=$HOME/.local
+    - name: Create bin directory and link littlesecrets CLI
+      run: |
+        mkdir -p bin
+        ln -srf src/sh/littlesecrets.sh bin/littlesecrets
+        chmod +x bin/littlesecrets
 
-    - name: Add to PATH
-      run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+    - name: Add repo bin to PATH
+      run: echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
 
     - name: Run tests
       run: make test

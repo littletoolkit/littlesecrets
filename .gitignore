@@ -6,3 +6,4 @@ zig-cache
 .env
 tmp.*
 docs/scratchpad.md
+bin/
