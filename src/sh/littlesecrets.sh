@@ -450,7 +450,12 @@ function ls_pubkey_path { #KEYPATH
 
 function ls_privkey_new { #KEYPATH
 	ls_mkparent "${1:-}"
-	openssl genrsa -out "${1:-/dev/stdout}" 4096
+	if [ -n "${1:-}" ]; then
+		openssl genrsa -out "$1" 4096
+	else
+		# When no path is provided, output to stdout directly
+		openssl genrsa 4096
+	fi
 }
 
 # --
@@ -482,7 +487,7 @@ function ls_privkey_import { # KEYPATH
 		ls_log_output_start
 		ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2
 		ls_log_output_end
-		openssl rsa -in "$keyout_tmp" -out /dev/stdout
+		openssl rsa -in "$keyout_tmp"
 		unlink "$keyout_tmp"
 		;;
 	private:pkcs8*)
@@ -700,19 +705,23 @@ function ls_key {
 # --
 function ls_encrypt_sym { # KEY
 	local key_path=$(ls_mkstemp "$1")
+	local output_path=$(ls_mkstemp)
 	ls_log_output_start
 	if ! {
 		# NOTE: The fd anonymises the key path
 		exec 3<"$key_path"
-		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass fd:3
+		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out "$output_path" -pass fd:3
 		local openssl_res=$?
 		exec 3<&-
+		if [ $openssl_res -eq 0 ]; then
+			cat "$output_path"
+		fi
 		return $openssl_res
 	}; then
 		ls_log_error "ls_encrypt_sym: Could not encrypt secret"
 	fi
 	ls_log_output_end
-	unlink "$key_path"
+	unlink "$key_path" "$output_path"
 }
 
 # Function: ls_hmac KEY
@@ -741,18 +750,25 @@ function ls_hmac {
 function ls_decrypt_sym { # KEY
 	local res=0
 	local key_path=$(ls_mkstemp "$1")
+	local input_path=$(ls_mkstemp)
+	local output_path=$(ls_mkstemp)
+	# Read input first
+	cat > "$input_path"
 	if ! {
 		exec 3<"$key_path"
-		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass fd:3
+		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3
 		local openssl_res=$?
 		exec 3<&-
+		if [ $openssl_res -eq 0 ]; then
+			cat "$output_path"
+		fi
 		return $openssl_res
 	}; then
 		res=1
 		ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$res]"
 	fi
 	ls_log_output_end
-	unlink "$key_path"
+	unlink "$key_path" "$input_path" "$output_path"
 	return "$res"
 }
 
@@ -775,11 +791,15 @@ function ls_encrypt_asym { # PUBKEY? PATH?
 		pubkey_temp=1
 	fi
 	ls_log_output_start
-	if ! openssl pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out /dev/stdout; then
+	local output_path=$(ls_mkstemp)
+	if ! openssl pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out "$output_path"; then
 		res=1
 		ls_log_error "ls_encrypt_asym: Could not asymmetrically encrypt secret"
+	else
+		cat "$output_path"
 	fi
 	ls_log_output_end
+	unlink "$output_path"
 	if [ "$pubkey_temp" == 1 ]; then
 		unlink "$pubkey_path"
 	fi
@@ -805,11 +825,15 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 		privkey_temp=1
 	fi
 	ls_log_output_start
-	if ! openssl pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out /dev/stdout; then
+	local output_path=$(ls_mkstemp)
+	if ! openssl pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path"; then
 		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$?]"
 		res=1
+	else
+		cat "$output_path"
 	fi
 	ls_log_output_end
+	unlink "$output_path"
 	if [ "$privkey_temp" == 1 ]; then
 		unlink "$privkey_path"
 	fi
