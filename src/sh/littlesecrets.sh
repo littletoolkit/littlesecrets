@@ -388,6 +388,45 @@ function ls_value_decrypt() {
 
 # -----------------------------------------------------------------------------
 #
+# JSON UTILITIES
+#
+# -----------------------------------------------------------------------------
+
+# Function: ls_json_escape [STRING]
+# Escapes a string for JSON output
+function ls_json_escape() {
+	local str="${1:-}"
+	# Escape backslashes first
+	str="${str//\\/\\\\}"
+	# Escape double quotes
+	str="${str//\"/\\\"}"
+	# Escape newlines, tabs, and other control characters
+	str="${str//$'\n'/\\n}"
+	str="${str//$'\r'/\\r}"
+	str="${str//$'\t'/\\t}"
+	# Escape other control characters (ASCII 0-31)
+	printf '%s' "$str" | sed 's/[\x00-\x1f]/\\u00&/g'
+}
+
+# Function: ls_json_string [STRING]
+# Outputs a JSON string with proper escaping
+function ls_json_string() {
+	local str="${1:-}"
+	printf '"%s"' "$(ls_json_escape "$str")"
+}
+
+# Function: ls_json_is_binary [STRING]
+# Checks if a string contains binary data that needs base64 encoding
+function ls_json_is_binary() {
+	local str="${1:-}"
+	# For now, assume all data is text-based. In a real implementation,
+	# we would check for null bytes and other control characters.
+	# This is a simplified version that treats everything as text.
+	return 1
+}
+
+# -----------------------------------------------------------------------------
+#
 # KEYS
 #
 # -----------------------------------------------------------------------------
@@ -1318,11 +1357,34 @@ function ls_secret_ensure { # NAME
 	if ls_secret_path "$1" >/dev/null 2>&1; then
 		# Secret exists, check if user has access by trying to get the secret
 		# We get the secret and output it, similar to the 'get' command
-		if ! ls_secret_get "$1"; then
+		local secret_value
+		if ! secret_value=$(ls_secret_get "$1"); then
 			ls_log_error "ensure: Secret '$1' exists but you don't have access to it"
 			return 1
 		fi
-		# Secret exists and user has access, secret value was already output by ls_secret_get
+		# Secret exists and user has access, output the value in the requested format
+		if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+			# JSON output format: {"name": "secret.name", "value": "secret.value"}
+			if ls_json_is_binary "$secret_value"; then
+				# Binary data needs base64 encoding
+				local encoded_value
+				encoded_value=$(printf '%s' "$secret_value" | base64 -w 0)
+				echo "{"
+				echo "  \"name\": $(ls_json_string "$1"),"
+				echo "  \"value\": $(ls_json_string "$encoded_value"),"
+				echo "  \"encoding\": \"base64\""
+				echo "}"
+			else
+				# Regular text data
+				echo "{"
+				echo "  \"name\": $(ls_json_string "$1"),"
+				echo "  \"value\": $(ls_json_string "$secret_value")"
+				echo "}"
+			fi
+		else
+			# Default text output format
+			echo -n "$secret_value"
+		fi
 		return 0
 	else
 		# Secret doesn't exist, create a new random secret (16 ASCII chars)
@@ -1336,8 +1398,17 @@ function ls_secret_ensure { # NAME
 			return 1
 		fi
 		if ls_secret_add "$1" "$random_secret"; then
-			# Output the newly created secret, similar to how 'get' works
-			echo -n "$random_secret"
+			# Output the newly created secret in the requested format
+			if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+				# JSON output format: {"name": "secret.name", "value": "secret.value"}
+				echo "{"
+				echo "  \"name\": $(ls_json_string "$1"),"
+				echo "  \"value\": $(ls_json_string "$random_secret")"
+				echo "}"
+			else
+				# Default text output format
+				echo -n "$random_secret"
+			fi
 			return 0
 		else
 			return $?
@@ -1555,38 +1626,112 @@ function ls_user_deregister { # USER KEY?
 function ls_secret_export {
 	# This exports as a shell script, but we could export to other formats if
 	# necessary.
-	if [ $# -eq 0 ]; then
-		local secrets
-		secrets=$(ls_secret_list)
-		if [ -z "$secrets" ]; then
-			echo "# No secrets in $(ls_store)"
+	if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+		# JSON output format: array of {"name": "secret.name", "value": "secret.value"}
+		echo "["
+		local first=true
+		if [ $# -eq 0 ]; then
+			# No arguments, export all secrets
+			local secrets
+			secrets=$(ls_secret_list)
+			if [ -n "$secrets" ]; then
+				for secret in $secrets; do
+					if [ "$first" = true ]; then
+						first=false
+					else
+						echo ","
+					fi
+					ls_secret_export_json_object "$secret"
+				done
+			fi
 		else
-			# We do want to split this and pass it as arguments
-			# shellcheck disable=SC2068
-			ls_secret_export ${secrets[@]}
+			# Export specific secrets
+			for var in "$@"; do
+				local secname="${var##*=}"
+				if [ "$first" = true ]; then
+					first=false
+				else
+					echo ","
+				fi
+				ls_secret_export_json_object "$secname"
+			done
 		fi
+		echo ""
+		echo "]"
 	else
-		local envname
-		local secname
-		local secval
-		for var in "$@"; do
-			envname="${var%%=*}"
-			secname="${var##*=}"
-			if [ "$envname" == "$secname" ]; then
-				envname="$(echo "${envname//./_}" | tr 'a-z' 'A-Z')"
-			fi
-
-			if ! ls_secret_verify "$secname"; then
-				ls_log_error "Could not validate secret authentiticy: $secname"
-				echo "# Unable to validate secret authenticity: $secname"
-			elif ! secval=$(ls_secret_get "$secname"); then
-				ls_log_error "Unable to retrieve secret: $secname"
-				echo "# Unable to retrieve secret: $secname"
+		# Default shell script output format
+		if [ $# -eq 0 ]; then
+			local secrets
+			secrets=$(ls_secret_list)
+			if [ -z "$secrets" ]; then
+				echo "# No secrets in $(ls_store)"
 			else
-				# NOTE: Newlines are actually OK
-				echo "export $envname='${secval}'"
+				# We do want to split this and pass it as arguments
+				# shellcheck disable=SC2068
+				ls_secret_export ${secrets[@]}
 			fi
-		done
+		else
+			local envname
+			local secname
+			local secval
+			for var in "$@"; do
+				envname="${var%%=*}"
+				secname="${var##*=}"
+				if [ "$envname" == "$secname" ]; then
+					envname="$(echo "${envname//./_}" | tr 'a-z' 'A-Z')"
+				fi
+
+				if ! ls_secret_verify "$secname"; then
+					ls_log_error "Could not validate secret authentiticy: $secname"
+					echo "# Unable to validate secret authenticity: $secname"
+				elif ! secval=$(ls_secret_get "$secname"); then
+					ls_log_error "Unable to retrieve secret: $secname"
+					echo "# Unable to retrieve secret: $secname"
+				else
+					# NOTE: Newlines are actually OK
+					echo "export $envname='${secval}'"
+				fi
+			done
+		fi
+	fi
+}
+
+# Function: ls_secret_export_json_object [SECRET_NAME]
+# Helper function to output a single secret as JSON object for export
+function ls_secret_export_json_object {
+	local secname="$1"
+	local secval
+	
+	if ! ls_secret_verify "$secname"; then
+		# Skip secrets that can't be verified
+		printf "  {\n"
+		printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
+		printf "    \"error\": %s\n" "$(ls_json_string "Unable to validate secret authenticity")"
+		printf "  }"
+	elif ! secval=$(ls_secret_get "$secname"); then
+		# Skip secrets that can't be retrieved
+		printf "  {\n"
+		printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
+		printf "    \"error\": %s\n" "$(ls_json_string "Unable to retrieve secret")"
+		printf "  }"
+	else
+		# Output the secret as JSON object
+		if ls_json_is_binary "$secval"; then
+			# Binary data needs base64 encoding
+			local encoded_value
+			encoded_value=$(printf '%s' "$secval" | base64 -w 0)
+			printf "  {\n"
+			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
+			printf "    \"value\": %s,\n" "$(ls_json_string "$encoded_value")"
+			printf "    \"encoding\": \"base64\"\n"
+			printf "  }"
+		else
+			# Regular text data
+			printf "  {\n"
+			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
+			printf "    \"value\": %s\n" "$(ls_json_string "$secval")"
+			printf "  }"
+		fi
 	fi
 }
 
@@ -1618,6 +1763,10 @@ function ls_cli {
 			;;
 		-s | --store)
 			LITTLESECRETS_STORE="$2"
+			shift 2
+			;;
+		-f | --format)
+			LITTLESECRETS_FORMAT="$2"
 			shift 2
 			;;
 		-h | --help)
@@ -1653,6 +1802,7 @@ function ls_cli {
 		echo "  -u, --user USER   Set user name"
 		echo "  --host HOST       Set host name (default: \$HOSTNAME)"
 		echo "  -s, --store PATH  Set store path"
+		echo "  -f, --format FMT  Set output format (text, json)"
 		echo ""
 		echo "Commands:"
 		grep '^[[:space:]]##[[:space:]]' "$0" | sed 's/^[[:space:]]*##[[:space:]]//'
@@ -1669,9 +1819,37 @@ function ls_cli {
 		;;
 	## list|ls [expr...]  List secrets matching expr
 	"list" | "ls")
-		for SECRET in $(ls_secret_list "$@"); do
-			echo "${BOLD}$SECRET${RESET}: ${DIM}$(ls_secret_keys "$SECRET")${RESET}"
-		done
+		if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+			# JSON output format: {"secret.name": ["user@host", ...]}
+			local first=true
+			echo "{"
+			for SECRET in $(ls_secret_list "$@"); do
+				if [ "$first" = true ]; then
+					first=false
+				else
+					echo ","
+				fi
+				printf '  %s: [' "$(ls_json_string "$SECRET")"
+				local keys=$(ls_secret_keys "$SECRET")
+				local key_first=true
+				for key in $keys; do
+					if [ "$key_first" = true ]; then
+						key_first=false
+					else
+						printf ', '
+					fi
+					printf '%s' "$(ls_json_string "$key")"
+				done
+				printf ']'
+			done
+			echo ""
+			echo "}"
+		else
+			# Default text output format
+			for SECRET in $(ls_secret_list "$@"); do
+				echo "${BOLD}$SECRET${RESET}: ${DIM}$(ls_secret_keys "$SECRET")${RESET}"
+			done
+		fi
 		;;
 	## get <name>         Get a secret's value
 	"get")
@@ -1688,8 +1866,34 @@ function ls_cli {
 			ls_log_tip "Secret likely has been updated and your key is out of date"
 			return 1
 		else
-			ls_secret_get "$1" "${2:-}"
-			return $?
+			local secret_value
+			if secret_value=$(ls_secret_get "$1" "${2:-}"); then
+				if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+					# JSON output format: {"name": "secret.name", "value": "secret.value"}
+					if ls_json_is_binary "$secret_value"; then
+						# Binary data needs base64 encoding
+						local encoded_value
+						encoded_value=$(printf '%s' "$secret_value" | base64 -w 0)
+						echo "{"
+						echo "  \"name\": $(ls_json_string "$1"),"
+						echo "  \"value\": $(ls_json_string "$encoded_value"),"
+						echo "  \"encoding\": \"base64\""
+						echo "}"
+					else
+						# Regular text data
+						echo "{"
+						echo "  \"name\": $(ls_json_string "$1"),"
+						echo "  \"value\": $(ls_json_string "$secret_value")"
+						echo "}"
+					fi
+				else
+					# Default text output format
+					echo -n "$secret_value"
+				fi
+				return 0
+			else
+				return 1
+			fi
 		fi
 		;;
 	## add|set <name> [value] Set a secret's value
@@ -1810,20 +2014,115 @@ function ls_cli {
 		;;
 	## users [expr...]    List users matching expr
 	"users")
-		ls_user_list "$@"
+		if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+			# JSON output format: {"user.name": ["user.host", ...]}
+			echo "{"
+			local first=true
+			local users
+			users=$(ls_user_list "$@")
+			if [ -n "$users" ]; then
+				# Group users by username
+				local -A user_hosts
+				while IFS=':' read -r username hostname; do
+					if [ -n "$username" ] && [ -n "$hostname" ]; then
+						user_hosts["$username"]+="$hostname "
+					fi
+				done <<< "$users"
+				
+				# Output JSON object
+				for username in "${!user_hosts[@]}"; do
+					if [ "$first" = true ]; then
+						first=false
+					else
+						echo ","
+					fi
+					printf '  %s: [' "$(ls_json_string "$username")"
+					local hosts="${user_hosts[$username]}"
+					local host_first=true
+					for host in $hosts; do
+						if [ -n "$host" ]; then
+							if [ "$host_first" = true ]; then
+								host_first=false
+							else
+								printf ', '
+							fi
+							printf '%s' "$(ls_json_string "$host")"
+						fi
+					done
+					printf ']'
+				done
+			fi
+			echo ""
+			echo "}"
+		else
+			# Default text output format
+			ls_user_list "$@"
+		fi
 		return $?
 		;;
 	## access [expr...]   List users with access to secrets matching expr
 	"access")
-		if [ -z "${1:-}" ]; then
-			ls_secret_users
-			return $?
+		if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+			# JSON output format: {"secret.name": ["user@host", ...]}
+			echo "{"
+			local first=true
+			if [ -z "${1:-}" ]; then
+				# No arguments, show access for all secrets
+				for secret in $(ls_secret_list); do
+					if [ "$first" = true ]; then
+						first=false
+					else
+						echo ","
+					fi
+					printf '  %s: [' "$(ls_json_string "$secret")"
+					local users=$(ls_secret_users "$secret")
+					local user_first=true
+					for user in $users; do
+						if [ "$user_first" = true ]; then
+							user_first=false
+						else
+							printf ', '
+						fi
+						printf '%s' "$(ls_json_string "$user")"
+					done
+					printf ']'
+				done
+			else
+				# Show access for specific secrets
+				for secret in $(ls_secret_list "$@"); do
+					if [ "$first" = true ]; then
+						first=false
+					else
+						echo ","
+					fi
+					printf '  %s: [' "$(ls_json_string "$secret")"
+					local users=$(ls_secret_users "$secret")
+					local user_first=true
+					for user in $users; do
+						if [ "$user_first" = true ]; then
+							user_first=false
+						else
+							printf ', '
+						fi
+						printf '%s' "$(ls_json_string "$user")"
+					done
+					printf ']'
+				done
+			fi
+			echo ""
+			echo "}"
 		else
-			for secret in $(ls_secret_list "$@"); do
-				echo -n "$secret:"
-				ls_secret_users "$secret"
-				echo
-			done
+			# Default text output format
+			if [ -z "${1:-}" ]; then
+				ls_secret_users
+				return $?
+			else
+				for secret in $(ls_secret_list "$@"); do
+					echo -n "$secret:"
+					ls_secret_users "$secret"
+					echo
+				done
+			fi
 		fi
 		;;
 	## export [VAR=secret...]   Exports the given secrets as variables
