@@ -107,42 +107,58 @@ export RESET
 # -----------------------------------------------------------------------------
 
 LS_LOG_PREFIX="${DIM}[ls]${RESET}"
+LS_LOG_FILTER="warning tip"
 
 function ls_log {
-	echo "${LS_LOG_PREFIX}$*${RESET}" >&2
+	if [[ "$LS_LOG_FILTER" = *"log"* ]]; then
+		echo "${LS_LOG_PREFIX}$*${RESET}" >&2
+	fi
 }
 
 function ls_log_action {
-	ls_log "${DIM}${BOLD} → ACT $*" >&2
+	if [[ "$LS_LOG_FILTER" = *"action"* ]]; then
+		ls_log "${DIM}${BOLD} → ACT $*" >&2
+	fi
 	return 0
 }
 
 function ls_log_message {
-	ls_log "${DIM} … NFO $*"
+	if [[ "$LS_LOG_FILTER" = *"message"* ]]; then
+		ls_log "${DIM} … NFO $*"
+	fi
 	return 0
 }
 
 function ls_log_tip {
-	ls_log " ✱ TIP $*"
+	if [[ "$LS_LOG_FILTER" = *"tip"* ]]; then
+		ls_log " ✱ TIP $*"
+	fi
 	return 0
 }
 
 function ls_log_error {
+	# NOTE: Errors are always logged
 	ls_log "${RED} ! ERR ${BOLD}$*"
 	return 0
 }
 
 function ls_log_warning {
-	ls_log "${ORANGE} ⚠ WRN ${BOLD}$*"
+	if [[ "$LS_LOG_FILTER" = *"warning"* ]]; then
+		ls_log "${ORANGE} ⚠ WRN ${BOLD}$*"
+	fi
 	return 0
 }
 
 function ls_log_output_start {
-	echo -n "${GRAY}" >&2
+	if [[ "$LS_LOG_FILTER" = *"output"* ]]; then
+		echo -n "${GRAY}" >&2
+	fi
 }
 
 function ls_log_output_end {
-	echo -n "${RESET}" >&2
+	if [[ "$LS_LOG_FILTER" = *"output"* ]]; then
+		echo -n "${RESET}" >&2
+	fi
 }
 
 function ls_log_stack {

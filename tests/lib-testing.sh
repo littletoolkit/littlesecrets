@@ -577,7 +577,7 @@ function test_prefix {
 }
 
 function test_nocolor {
-	sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/[\x00-\x1f\x7f]//g'
+	sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\x1b(B//g' -e 's/[\x00-\x1f\x7f]//g'
 
 }
 # -----------------------------------------------------------------------------
