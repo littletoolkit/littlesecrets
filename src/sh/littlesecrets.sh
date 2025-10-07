@@ -1317,12 +1317,12 @@ function ls_secret_ensure { # NAME
 	# Check if secret already exists (check the path, not access)
 	if ls_secret_path "$1" >/dev/null 2>&1; then
 		# Secret exists, check if user has access by trying to get the secret
-		# We redirect stderr to avoid showing error messages during the check
-		if ! ls_secret_get "$1" >/dev/null 2>&1; then
+		# We get the secret and output it, similar to the 'get' command
+		if ! ls_secret_get "$1"; then
 			ls_log_error "ensure: Secret '$1' exists but you don't have access to it"
 			return 1
 		fi
-		# Secret exists and user has access, return success
+		# Secret exists and user has access, secret value was already output by ls_secret_get
 		return 0
 	else
 		# Secret doesn't exist, create a new random secret (16 ASCII chars)
@@ -1335,8 +1335,13 @@ function ls_secret_ensure { # NAME
 			ls_log_error "ensure: Failed to generate random secret"
 			return 1
 		fi
-		ls_secret_add "$1" "$random_secret"
-		return $?
+		if ls_secret_add "$1" "$random_secret"; then
+			# Output the newly created secret, similar to how 'get' works
+			echo -n "$random_secret"
+			return 0
+		else
+			return $?
+		fi
 	fi
 }
 
