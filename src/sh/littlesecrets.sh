@@ -1683,7 +1683,7 @@ function ls_secret_export {
 
 				if ! ls_secret_verify "$secname"; then
 					ls_log_error "Could not validate secret authentiticy: $secname"
-					echo "# Unable to validate secret authenticity: $secname"
+					echo "export $envname= # ERROR: Secret HMAC invalid"
 				elif ! secval=$(ls_secret_get "$secname"); then
 					ls_log_error "Unable to retrieve secret: $secname"
 					echo "# Unable to retrieve secret: $secname"
@@ -1765,7 +1765,18 @@ function ls_cli {
 			LITTLESECRETS_STORE="$2"
 			shift 2
 			;;
+		-fjson)
+			# Handle -fjson format (combined flag and value)
+			LITTLESECRETS_FORMAT="json"
+			shift
+			;;
+		--format=json)
+			# Handle --format=json format (combined long flag and value)
+			LITTLESECRETS_FORMAT="json"
+			shift
+			;;
 		-f | --format)
+			# Handle -f json format (separate flag and value)
 			LITTLESECRETS_FORMAT="$2"
 			shift 2
 			;;
@@ -1862,6 +1873,7 @@ function ls_cli {
 			return 1
 
 		elif [ -n "$(ls_option hmac)" ] && ! ls_secret_verify "$1"; then
+			echo "Secret HMAC cannot be validated: $1"
 			ls_log_error "Secret signature differs: $1"
 			ls_log_tip "Secret likely has been updated and your key is out of date"
 			return 1
