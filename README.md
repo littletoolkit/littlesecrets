@@ -19,6 +19,12 @@ on RSA keypairs and AES-256-CBC with PBKDF2 for encryption.
 
 ## Quick Start
 
+Global options (excerpt): `-k|--key`, `-u|--user`, `--host`, `-s|--store`, `-fjson|--format=json|-f json`, `--binary`, `--text`.
+
+- `--binary` forces base64 encoding of secret values in JSON output (adds `encoding` field)
+- `--text` forces plain text emission of secret values in JSON output (suppresses `encoding` field)
+
+
 You can install like so, you'll need Bash, OpenSSL, Coreutils and a POSIX
 system.
 

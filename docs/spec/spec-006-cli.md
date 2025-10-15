@@ -19,9 +19,13 @@ In the commands:
 
 The tool support the following global options:
 
-- `-k|--key` to set the private key to use for decryption
-- `-u|--user` to set the user name
-- `-s|--store` the path to the secrets store
+- `-k|--key` set the private key to use for decryption (path or key contents)
+- `-u|--user` set the user name (defaults to `$USER`)
+- `--host` set the host name (defaults to `$HOSTNAME`)
+- `-s|--store` set the path (or relative name) of the secrets store (defaults to `.littlesecrets`)
+- `-fjson | --format=json | -f json` switch output to JSON (supported by: `list`, `users`, `access`, `add`, `set`, `get`, `ensure`, `export`)
+- `--binary` (JSON mode) force base64 output for values (adds `"encoding":"base64"` even for textual secrets)
+- `--text` (JSON mode) force plain text output for values (suppresses `encoding` even for binary secrets)
 
 The tool uses the following environment variables:
 

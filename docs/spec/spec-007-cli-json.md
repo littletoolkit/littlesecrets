@@ -20,8 +20,7 @@ The `-fjson` or `--format=json` option supports JSON outputs for the following c
 }
 ```
 
-Note that if the secret is binary it is base64 encoded
-
+Binary values are base64 encoded and include an `encoding` field:
 
 ```
 {
@@ -30,6 +29,13 @@ Note that if the secret is binary it is base64 encoded
   "encoding":"base64"
 }
 ```
+
+You can override automatic binary detection:
+
+- `--binary` forces base64 encoding (and the `encoding` field) for all values.
+- `--text` forces plain text output (no `encoding` field) even if the value contains non-text bytes.
+
+Automatic detection treats a value (or exported secret) as binary if the underlying decrypted file contains control characters (except tab, CR, LF) or high-bit bytes. Forced flags take precedence over detection.
 
 ## `export`
 
