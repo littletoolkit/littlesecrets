@@ -1397,7 +1397,7 @@ function ls_secret_ensure { # NAME
 			ls_log_error "ensure: Failed to generate random secret"
 			return 1
 		fi
-		if ls_secret_add "$1" "$random_secret"; then
+		if ls_secret_add "$1" "$random_secret" >/dev/null; then
 			# Output the newly created secret in the requested format
 			if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
 				# JSON output format: {"name": "secret.name", "value": "secret.value"}
