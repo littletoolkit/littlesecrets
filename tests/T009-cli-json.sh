@@ -55,6 +55,33 @@ echo "$JSON_GET" | grep -q '}' || test-fail "JSON get should end with brace"
 # Should not contain encoding field for text data
 echo "$JSON_GET" | grep -q '"encoding"' && test-fail "Text secret should not have encoding field"
 
+test-step "Test JSON format for add command"
+JSON_ADD=$(ls_cli -f json add json-added-secret added-value)
+echo "$JSON_ADD" | grep -q '"name"' || test-fail "JSON add should contain name field"
+echo "$JSON_ADD" | grep -q '"json-added-secret"' || test-fail "JSON add should contain secret name"
+echo "$JSON_ADD" | grep -q '"value"' || test-fail "JSON add should contain value field"
+echo "$JSON_ADD" | grep -q '"added-value"' || test-fail "JSON add should contain secret value"
+# Should not contain encoding for text
+echo "$JSON_ADD" | grep -q '"encoding"' && test-fail "Text add should not have encoding field"
+
+# Test set (update) with stdin
+TEST_SET_VALUE="updated-value"
+JSON_SET=$(echo -n "$TEST_SET_VALUE" | ls_cli -f json set json-added-secret)
+echo "$JSON_SET" | grep -q '"json-added-secret"' || test-fail "JSON set should contain secret name"
+echo "$JSON_SET" | grep -q '"updated-value"' || test-fail "JSON set should contain updated value"
+
+# Binary add
+BINARY_VALUE=$'bin\x00val'
+JSON_ADD_BIN=$(ls_cli -f json add json-bin-secret "$BINARY_VALUE")
+echo "$JSON_ADD_BIN" | grep -q '"json-bin-secret"' || test-fail "JSON add binary should contain secret name"
+echo "$JSON_ADD_BIN" | grep -q '"encoding"' || test-fail "Binary add should have encoding field"
+
+# Binary set via stdin
+BINARY_SET_VALUE=$'more\x00bin'
+JSON_SET_BIN=$(echo -n "$BINARY_SET_VALUE" | ls_cli -f json set json-bin-secret)
+echo "$JSON_SET_BIN" | grep -q '"json-bin-secret"' || test-fail "JSON set binary should contain secret name"
+echo "$JSON_SET_BIN" | grep -q '"encoding"' || test-fail "Binary set should have encoding field"
+
 test-step "Test JSON format for ensure command with existing secret"
 JSON_ENSURE=$(ls_cli -f json ensure secret1)
 echo "$JSON_ENSURE" | grep -q '"name"' || test-fail "JSON ensure should contain name field"
@@ -136,6 +163,17 @@ echo "$TEXT_ACCESS" | grep -q 'sebastien@bench' || test-fail "Text access should
 
 TEXT_EXPORT=$(ls_cli export)
 echo "$TEXT_EXPORT" | grep -q "export SECRET1='value1'" || test-fail "Text export should contain shell export format"
+
+# Test forced binary encoding for a text secret
+TEST_FORCE_BIN=$(ls_cli -f json --binary get secret1)
+if ! echo "$TEST_FORCE_BIN" | grep -q '"encoding"'; then
+    test-fail "--binary should force encoding field for text secret"
+fi
+# Test forced text decoding for a binary secret
+TEST_FORCE_TEXT=$(ls_cli -f json --text get binary-secret)
+if echo "$TEST_FORCE_TEXT" | grep -q '"encoding"'; then
+    test-fail "--text should suppress encoding field for binary secret"
+fi
 
 test-step "Test JSON format validation with jq (if available)"
 if command -v jq >/dev/null 2>&1; then

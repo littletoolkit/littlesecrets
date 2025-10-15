@@ -11,7 +11,7 @@ The `-fjson` or `--format=json` option supports JSON outputs for the following c
 }
 ```
 
-## `get` and `ensure`
+## `add`, `set`, `get` and `ensure`
 
 ```
 {

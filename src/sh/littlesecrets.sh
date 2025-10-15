@@ -416,13 +416,65 @@ function ls_json_string() {
 }
 
 # Function: ls_json_is_binary [STRING]
-# Checks if a string contains binary data that needs base64 encoding
+# (Deprecated internal heuristic) Kept for backwards compatibility.
+# Returns 0 if STRING appears binary (control chars besides tab/newline/CR) otherwise 1.
 function ls_json_is_binary() {
 	local str="${1:-}"
-	# For now, assume all data is text-based. In a real implementation,
-	# we would check for null bytes and other control characters.
-	# This is a simplified version that treats everything as text.
+	if [ -z "$str" ]; then
+		return 1
+	fi
+	if printf '%s' "$str" | LC_ALL=C grep -qP '[\x00-\x08\x0B\x0C\x0E-\x1F]'; then
+		return 0
+	fi
 	return 1
+}
+
+# Function: ls_is_binary_file [PATH]
+# Returns 0 if file contains bytes outside printable text range
+# (control chars except \t,\n,\r or high-bit bytes), else 1.
+function ls_is_binary_file() {
+	local path="${1:-}"
+	if [ -z "$path" ] || [ ! -f "$path" ]; then
+		return 1
+	fi
+	# Empty file is text
+	if [ ! -s "$path" ]; then
+		return 1
+	fi
+	if LC_ALL=C grep -qP '[\x00-\x08\x0B\x0C\x0E-\x1F\x80-\xFF]' "$path" 2>/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
+# Function: ls_file_base64 [PATH]
+# Emits base64 (no newlines) of file contents
+function ls_file_base64() {
+	local path="${1:-}"
+	if [ -z "$path" ] || [ ! -f "$path" ]; then
+		return 1
+	fi
+	openssl base64 -A <"$path"
+}
+
+# Function: ls_json_emit_key_array KEY [ITEM...]
+# Emits a JSON key mapped to an array of string values (no trailing comma).
+# Output format: two-space indent, then "key": ["a", "b"].
+function ls_json_emit_key_array() { # KEY ITEMS...
+	local key="$1"; shift || true
+	printf '  %s: [' "$(ls_json_string "$key")"
+	local first=true
+	for item in "$@"; do
+		if [ -n "$item" ]; then
+			if [ "$first" = true ]; then
+				first=false
+			else
+				printf ', '
+			fi
+			printf '%s' "$(ls_json_string "$item")"
+		fi
+	done
+	printf ']'
 }
 
 # -----------------------------------------------------------------------------
@@ -1288,7 +1340,7 @@ function ls_secret_path { # SECRET
 	if [ ! -e "$secret_path/secret.enc" ]; then
 		return 1
 	else
-		echo "$secret_path"
+	echo "$secret_path"
 	fi
 }
 
@@ -1348,6 +1400,42 @@ function ls_secret_hmac_path { #SECRET
 	echo "$(ls_secret_path "$1")/secret.hmac"
 }
 
+# Emits JSON for a secret name/value pair. Handles binary detection & base64.
+# Usage: ls_secret_emit_json NAME VALUE
+function ls_secret_emit_json { # NAME VALUE
+	local name="$1"
+	local value="$2"
+	local tmp
+	tmp="$(ls_mkstemp)"
+	printf '%s' "$value" >"$tmp"
+	local is_bin=1
+	# Determine if we should treat as binary based on forced flags or detection
+	local force_enc="${LITTLESECRETS_FORCE_ENCODING:-}"
+	if [ "$force_enc" = "base64" ]; then
+		is_bin=0
+	elif [ "$force_enc" = "text" ]; then
+		is_bin=1
+	elif ls_is_binary_file "$tmp"; then
+		is_bin=0
+	fi
+	if [ $is_bin -eq 0 ]; then
+		local encoded_value
+		encoded_value="$(ls_file_base64 "$tmp")"
+		printf '{\n'
+		printf '  "name": %s,\n' "$(ls_json_string "$name")"
+		printf '  "value": %s,\n' "$(ls_json_string "$encoded_value")"
+		printf '  "encoding": "base64"\n'
+		printf '}\n'
+	else
+		printf '{\n'
+		printf '  "name": %s,\n' "$(ls_json_string "$name")"
+		printf '  "value": %s\n' "$(ls_json_string "$value")"
+		printf '}\n'
+	fi
+	unlink "$tmp"
+}
+
+
 function ls_secret_ensure { # NAME
 	if [ -z "${1:-}" ]; then
 		ls_log_error "ensure: Missing secret name"
@@ -1364,23 +1452,7 @@ function ls_secret_ensure { # NAME
 		fi
 		# Secret exists and user has access, output the value in the requested format
 		if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
-			# JSON output format: {"name": "secret.name", "value": "secret.value"}
-			if ls_json_is_binary "$secret_value"; then
-				# Binary data needs base64 encoding
-				local encoded_value
-				encoded_value=$(printf '%s' "$secret_value" | base64 -w 0)
-				echo "{"
-				echo "  \"name\": $(ls_json_string "$1"),"
-				echo "  \"value\": $(ls_json_string "$encoded_value"),"
-				echo "  \"encoding\": \"base64\""
-				echo "}"
-			else
-				# Regular text data
-				echo "{"
-				echo "  \"name\": $(ls_json_string "$1"),"
-				echo "  \"value\": $(ls_json_string "$secret_value")"
-				echo "}"
-			fi
+			ls_secret_emit_json "$1" "$secret_value"
 		else
 			# Default text output format
 			echo -n "$secret_value"
@@ -1400,11 +1472,7 @@ function ls_secret_ensure { # NAME
 		if ls_secret_add "$1" "$random_secret" >/dev/null; then
 			# Output the newly created secret in the requested format
 			if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
-				# JSON output format: {"name": "secret.name", "value": "secret.value"}
-				echo "{"
-				echo "  \"name\": $(ls_json_string "$1"),"
-				echo "  \"value\": $(ls_json_string "$random_secret")"
-				echo "}"
+				ls_secret_emit_json "$1" "$random_secret"
 			else
 				# Default text output format
 				echo -n "$random_secret"
@@ -1716,22 +1784,38 @@ function ls_secret_export_json_object {
 		printf "  }"
 	else
 		# Output the secret as JSON object
-		if ls_json_is_binary "$secval"; then
-			# Binary data needs base64 encoding
+		local tmp
+		tmp="$(ls_mkstemp)"
+		printf '%s' "$secval" >"$tmp"
+		local force_enc="${LITTLESECRETS_FORCE_ENCODING:-}"
+		if [ "$force_enc" = "base64" ]; then
 			local encoded_value
-			encoded_value=$(printf '%s' "$secval" | base64 -w 0)
+			encoded_value="$(ls_file_base64 "$tmp")"
+			printf "  {\n"
+			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
+			printf "    \"value\": %s,\n" "$(ls_json_string "$encoded_value")"
+			printf "    \"encoding\": \"base64\"\n"
+			printf "  }"
+		elif [ "$force_enc" = "text" ]; then
+			printf "  {\n"
+			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
+			printf "    \"value\": %s\n" "$(ls_json_string "$secval")"
+			printf "  }"
+		elif ls_is_binary_file "$tmp"; then
+			local encoded_value
+			encoded_value="$(ls_file_base64 "$tmp")"
 			printf "  {\n"
 			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
 			printf "    \"value\": %s,\n" "$(ls_json_string "$encoded_value")"
 			printf "    \"encoding\": \"base64\"\n"
 			printf "  }"
 		else
-			# Regular text data
 			printf "  {\n"
 			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
 			printf "    \"value\": %s\n" "$(ls_json_string "$secval")"
 			printf "  }"
 		fi
+		unlink "$tmp"
 	fi
 }
 
@@ -1764,6 +1848,16 @@ function ls_cli {
 		-s | --store)
 			LITTLESECRETS_STORE="$2"
 			shift 2
+			;;
+		--binary)
+			# Force JSON/base64 encoding of value fields (when in JSON mode)
+			LITTLESECRETS_FORCE_ENCODING="base64"
+			shift
+			;;
+		--text)
+			# Force treat values as text (never base64) even if detection says binary
+			LITTLESECRETS_FORCE_ENCODING="text"
+			shift
 			;;
 		-fjson)
 			# Handle -fjson format (combined flag and value)
@@ -1814,6 +1908,8 @@ function ls_cli {
 		echo "  --host HOST       Set host name (default: \$HOSTNAME)"
 		echo "  -s, --store PATH  Set store path"
 		echo "  -f, --format FMT  Set output format (text, json)"
+		echo "      --binary      Force base64 encoding in JSON output"
+		echo "      --text        Force plain text values in JSON output"
 		echo ""
 		echo "Commands:"
 		grep '^[[:space:]]##[[:space:]]' "$0" | sed 's/^[[:space:]]*##[[:space:]]//'
@@ -1840,18 +1936,13 @@ function ls_cli {
 				else
 					echo ","
 				fi
-				printf '  %s: [' "$(ls_json_string "$SECRET")"
-				local keys=$(ls_secret_keys "$SECRET")
-				local key_first=true
-				for key in $keys; do
-					if [ "$key_first" = true ]; then
-						key_first=false
-					else
-						printf ', '
-					fi
-					printf '%s' "$(ls_json_string "$key")"
+				# Collect keys into array
+				local keys_array=()
+				for key in $(ls_secret_keys "$SECRET"); do
+					keys_array+=("$key")
 				done
-				printf ']'
+				# shellcheck disable=SC2068
+				ls_json_emit_key_array "$SECRET" ${keys_array[@]}
 			done
 			echo ""
 			echo "}"
@@ -1881,23 +1972,7 @@ function ls_cli {
 			local secret_value
 			if secret_value=$(ls_secret_get "$1" "${2:-}"); then
 				if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
-					# JSON output format: {"name": "secret.name", "value": "secret.value"}
-					if ls_json_is_binary "$secret_value"; then
-						# Binary data needs base64 encoding
-						local encoded_value
-						encoded_value=$(printf '%s' "$secret_value" | base64 -w 0)
-						echo "{"
-						echo "  \"name\": $(ls_json_string "$1"),"
-						echo "  \"value\": $(ls_json_string "$encoded_value"),"
-						echo "  \"encoding\": \"base64\""
-						echo "}"
-					else
-						# Regular text data
-						echo "{"
-						echo "  \"name\": $(ls_json_string "$1"),"
-						echo "  \"value\": $(ls_json_string "$secret_value")"
-						echo "}"
-					fi
+					ls_secret_emit_json "$1" "$secret_value"
 				else
 					# Default text output format
 					echo -n "$secret_value"
@@ -1916,12 +1991,30 @@ function ls_cli {
 		fi
 		if [ -n "${2:-}" ]; then
 			# Content provided as argument
-			ls_secret_add "$1" "$2" "${3:-}" "${4:-}"
-			return $?
+			if ls_secret_add "$1" "$2" "${3:-}" "${4:-}" >/dev/null; then
+				if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+					local secret_value
+					if secret_value=$(ls_secret_get "$1" "${3:-}"); then
+						ls_secret_emit_json "$1" "$secret_value"
+					fi
+				fi
+				return 0
+			else
+				return $?
+			fi
 		else
 			# Read content from stdin
-			ls_secret_add "$1" "" "${2:-}" "${3:-}"
-			return $?
+			if ls_secret_add "$1" "" "${2:-}" "${3:-}" >/dev/null; then
+				if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+					local secret_value
+					if secret_value=$(ls_secret_get "$1" "${2:-}"); then
+						ls_secret_emit_json "$1" "$secret_value"
+					fi
+				fi
+				return 0
+			else
+				return $?
+			fi
 		fi
 		;;
 	## hash NAMES* Ensures the secrets habe a matching hash
