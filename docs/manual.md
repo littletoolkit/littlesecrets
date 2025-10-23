@@ -94,6 +94,9 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **export** [*VAR=secret*...]
 : Exports the given secrets as shell environment variables
 
+**info**
+: Show repository information including path, users, and secrets
+
 # ENVIRONMENT
 
 **LITTLESECRETS_USER**
@@ -172,6 +175,15 @@ Export secrets as environment variables:
 ```
 littlesecrets export DB_PASS=db.password API_KEY=api.key
 # Outputs: export DB_PASS='secretvalue'; export API_KEY='keyvalue'
+```
+
+Show repository information:
+```
+littlesecrets info
+# Outputs:
+# Path: /absolute/path/to/.littlesecrets
+# Users: alice bob
+# Secrets: db.password api.key
 ```
 
 # EXIT STATUS

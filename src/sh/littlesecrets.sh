@@ -1821,6 +1821,77 @@ function ls_secret_export_json_object {
 
 # -----------------------------------------------------------------------------
 #
+# INFO
+#
+# -----------------------------------------------------------------------------
+
+function ls_info {
+	local store
+	store="$(ls_store)"
+	if [ -z "$store" ]; then
+		ls_log_error "No littlesecrets store found"
+		return 1
+	fi
+
+	# Get absolute path to store
+	local abs_path
+	abs_path="$(realpath "$store")"
+
+	# Get unique users (extract username before colon)
+	local users
+	users=$(ls_user_list | cut -d: -f1 | sort -u | tr '\n' ' ' | sed 's/ $//')
+
+	# Get secrets
+	local secrets
+	secrets=$(ls_secret_list | tr '\n' ' ' | sed 's/ $//')
+
+	if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
+		# JSON output format
+		echo "{"
+		printf '  "path": %s,\n' "$(ls_json_string "$abs_path")"
+		# Convert users string to JSON array
+		printf '  "users": ['
+		local first=true
+		for user in $users; do
+			if [ "$first" = true ]; then
+				first=false
+			else
+				printf ', '
+			fi
+			printf '%s' "$(ls_json_string "$user")"
+		done
+		printf '],\n'
+		# Convert secrets string to JSON array
+		printf '  "secrets": ['
+		first=true
+		for secret in $secrets; do
+			if [ "$first" = true ]; then
+				first=false
+			else
+				printf ', '
+			fi
+			printf '%s' "$(ls_json_string "$secret")"
+		done
+		printf ']\n'
+		echo "}"
+	else
+		# Default text output format
+		echo "Path: $abs_path"
+		if [ -n "$users" ]; then
+			echo "Users: $users"
+		else
+			echo "Users: (none)"
+		fi
+		if [ -n "$secrets" ]; then
+			echo "Secrets: $secrets"
+		else
+			echo "Secrets: (none)"
+		fi
+	fi
+}
+
+# -----------------------------------------------------------------------------
+#
 # CLI
 #
 # -----------------------------------------------------------------------------
@@ -2238,6 +2309,11 @@ function ls_cli {
 	## ensure <name>      Ensure a secret exists (create if missing)
 	"ensure")
 		ls_secret_ensure "$@"
+		return $?
+		;;
+	## info              Show repository information (path, users, secrets)
+	"info")
+		ls_info "$@"
 		return $?
 		;;
 	*)

@@ -11,6 +11,7 @@ The tool should have the following CLI:
 - `revoke SECRET EXPR…` revoke the secrets from all users matching any of `EXPR`
 - `register USER KEY?` registers the given key for the given user
 - `deregister USER KEY?` de-registers the given key (or all key) for the given user
+- `info` shows repository information (path, users, secrets)
 
 In the commands:
 

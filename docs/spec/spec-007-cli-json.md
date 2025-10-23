@@ -56,3 +56,13 @@ Export is a list of payloads like `get` and `ensure`
 }
 ```
 
+## `info`
+
+```
+{
+  "path": "/absolute/path/to/.littlesecrets",
+  "users": ["user1", "user2", "user3"],
+  "secrets": ["secret1", "secret2", "secret3"]
+}
+```
+
