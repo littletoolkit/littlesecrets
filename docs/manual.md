@@ -94,6 +94,12 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **export** [*VAR=secret*...]
 : Exports the given secrets as shell environment variables
 
+**ensure** *SECRET*
+: Ensure a secret exists (create if missing). If the secret exists, returns its value. If not, creates a new random secret and returns it.
+
+**has** *EXPR*...
+: Check if secrets matching glob expressions exist. Returns exit code 0 if any secrets match, 1 otherwise. Designed for scripting and conditional logic. Supports multiple patterns combined with OR logic.
+
 **info**
 : Show repository information including path, users, and secrets
 
@@ -177,6 +183,28 @@ littlesecrets export DB_PASS=db.password API_KEY=api.key
 # Outputs: export DB_PASS='secretvalue'; export API_KEY='keyvalue'
 ```
 
+Ensure a secret exists (creates if missing):
+```
+littlesecrets ensure api.key
+# If exists: outputs the existing secret value
+# If not exists: creates and outputs new random secret like "a7B9xK3mP2nQ8rL"
+```
+
+Check if secrets exist before running operations:
+```
+if littlesecrets has "db.*"; then
+    echo "Database secrets found, running migration"
+    run_migration
+else
+    echo "No database secrets found"
+fi
+
+# Check multiple patterns
+if littlesecrets has "test.*" "staging.*"; then
+    run_integration_tests
+fi
+```
+
 Show repository information:
 ```
 littlesecrets info
@@ -189,10 +217,10 @@ littlesecrets info
 # EXIT STATUS
 
 **0**
-: Success
+: Success. For the `has` command, this means at least one secret matched the given patterns.
 
 **1**
-: Various errors (invalid arguments, encryption failure, etc.)
+: Various errors (invalid arguments, encryption failure, etc.). For the `has` command, this means no secrets matched the given patterns.
 
 # BUGS
 

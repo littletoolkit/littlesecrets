@@ -2311,6 +2311,20 @@ function ls_cli {
 		ls_secret_ensure "$@"
 		return $?
 		;;
+	## has <expr...>      Check if secrets matching expr exist (returns 0 if found)
+	"has")
+		if [ -z "${1:-}" ]; then
+			ls_log_error "has: Missing secret pattern"
+			return 1
+		fi
+		local found_secrets
+		found_secrets=$(ls_secret_list "$@")
+		if [ -n "$found_secrets" ]; then
+			return 0
+		else
+			return 1
+		fi
+		;;
 	## info              Show repository information (path, users, secrets)
 	"info")
 		ls_info "$@"
