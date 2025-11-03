@@ -430,15 +430,15 @@ function ls_json_escape() {
 		}
 		' 2>/dev/null && return 0
 	fi
-	
+
 	# Fallback: use a loop with printf for each character
 	local result=""
 	local i
-	for ((i=0; i<${#str}; i++)); do
+	for ((i = 0; i < ${#str}; i++)); do
 		local char="${str:$i:1}"
 		local ascii_val
 		ascii_val=$(printf '%d' "'$char" 2>/dev/null || echo 0)
-		if (( ascii_val >= 0 && ascii_val <= 31 )) && [[ "$char" != $'\n' && "$char" != $'\r' && "$char" != $'\t' ]]; then
+		if ((ascii_val >= 0 && ascii_val <= 31)) && [[ "$char" != $'\n' && "$char" != $'\r' && "$char" != $'\t' ]]; then
 			result+="\\u00$(printf '%02X' "$ascii_val")"
 		else
 			result+="$char"
@@ -500,7 +500,8 @@ function ls_file_base64() {
 # Emits a JSON key mapped to an array of string values (no trailing comma).
 # Output format: two-space indent, then "key": ["a", "b"].
 function ls_json_emit_key_array() { # KEY ITEMS...
-	local key="$1"; shift || true
+	local key="$1"
+	shift || true
 	printf '  %s: [' "$(ls_json_string "$key")"
 	local first=true
 	for item in "$@"; do
@@ -526,8 +527,6 @@ function ls_json_emit_key_array() { # KEY ITEMS...
 # Ensures that the `LITTLESECRETS_KEY` exists and is in the right format.
 function ls_ssh_keypair_ensure { # KEYPATH
 	local privkey_path="${1:-$LITTLESECRETS_KEY}"
-	local privkey_pem_path="${privkey_path}.pem"
-	local pubkey_pem_path="${privkey_path}.pem.pub"
 	# Ensures private key exists, otherwise creates it
 	if [ ! -e "$privkey_path" ]; then
 		ls_log_message "Missing SSH RSA key: $privkey_path"
@@ -536,14 +535,25 @@ function ls_ssh_keypair_ensure { # KEYPATH
 		ssh-keygen -q -t rsa -b 4096 -N "" -f "$privkey_path" >&2
 		ls_log_output_end
 	fi
-	ssh-keygen -y -P "" -f "$privkey_path" >/dev/null 2>&1
+	if ! ssh-keygen -y -P "" -f "$privkey_path" >/dev/null 2>&1; then
+		ls_log_error "SSH private key with passphrase are not supported: $privkey_path"
+		return 1
+	fi
 	if [ ! $? -eq 0 ]; then
 		ls_log_error "SSH private key has a passphrase: $privkey_path"
 		ls_log_tip "Generate a new key and set 'LITTLESECRETS_KEY' to that key"
 		return 1
 	fi
+	local key_id
+	key_id=$(openssl dgst -sha256 "$privkey_path" | cut -d' ' -f2 | cut -c1-16)
+	local privkey_parent=$(dirname "$(realpath "$privkey_path")")
+	local privkey_pem_path="${privkey_parent}/littlesecrets-${key_id}.pem"
+	local pubkey_pem_path="${privkey_parent}/littlesecrets-${key_id}.pem.pub"
 	# Ensures PEM private key exists, and is up to date
 	if [ ! -e "$privkey_pem_path" ] || [ "$privkey_path" -nt "$privkey_pem_path" ]; then
+		if [ -e "$privkey_pem_path" ]; then
+			chmod +w "$privkey_pem_path"
+		fi
 		ls_log_action "Converting SSH RSA DER key to PEM format: $privkey_pem_path"
 		# NOTE: ssh-keygen will overwrite the key, so we copy it
 		cp -a "$privkey_path" "$privkey_pem_path.ssh"
@@ -553,13 +563,22 @@ function ls_ssh_keypair_ensure { # KEYPATH
 		openssl rsa -in "${privkey_pem_path}.ssh" -out "${privkey_pem_path}" >&2
 		ls_log_output_end
 		unlink "${privkey_pem_path}.ssh"
+		chmod 400 "$privkey_pem_path"
 	fi
 	# Ensures PEM public key exists, and is up to date
 	if [ ! -e "$pubkey_pem_path" ] || [ "$privkey_pem_path" -nt "$pubkey_pem_path" ]; then
+		if [ -e "$pubkey_pem_path" ]; then
+			chmod +w "$pubkey_pem_path"
+		fi
 		ls_log_action "Deriving PKCS8 public key from RSA PEM private key: $pubkey_pem_path"
 		ls_log_output_start
 		openssl rsa -in "$privkey_pem_path" -pubout -out "$pubkey_pem_path" >&2
 		ls_log_output_end
+		chmod 400 "$pubkey_pem_path"
+	fi
+	if [ ! -e "$privkey_pem_path" ] || [ ! -e "$pubkey_pem_path" ]; then
+		ls_log_error "Could not create PEM keypair from SSH keypair: $privkey_path"
+		return 1
 	fi
 	echo "${privkey_pem_path}"
 }
@@ -588,48 +607,50 @@ function ls_privkey_new { #KEYPATH
 	fi
 }
 
-# --
-# Imports the private key at the given file, outputting the normalized key value.
-# Will always return the private key as a its contents, not as a file.
-function ls_privkey_import { # KEYPATH
-	local keypath="${1:-$(ls_pubkey_path)}"
-	local keyfmt=
-	local keypath_tmp=
-	local keyout_tmp=
-	if ls_ispath "$1" && [ -e "$1" ]; then
-		keyfmt="$(ls_key_id "$keypath")"
-	else
-		keypath_tmp="$(ls_mkstemp)"
-		echo -n "$keypath" | ls_decode >"$keypath_tmp"
-		keypath="$keypath_tmp"
-		keyfmt="$(ls_key_id "$keypath")"
-	fi
-	local res=0
-	case "$keyfmt" in
-	# We obviously only support private keys here
-	private:ssh*)
-		keyout_tmp=$(ls_mkstemp)
-		if ls_ispath "$keypath"; then
-			cp -a "$keypath" "$keyout_tmp"
-		else
-			echo "$keypath" >"$keyout_tmp"
-		fi
-		ls_log_output_start
-		ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2
-		ls_log_output_end
-		openssl rsa -in "$keyout_tmp"
-		unlink "$keyout_tmp"
-		;;
-	private:pkcs8*)
-		# That's what we want
-		cat "$keypath"
-		;;
-	*)
-		ls_log_error "ls_privkey_import: Unsupported format $keyfmt"
-		;;
-	esac
-	ls_unlink "$keypath_tmp" "$keyout_tmp"
-}
+# NOTE: Disabling this as ls_ssh_keypair_ensure is better
+# # NOTE: This is redundant with ls_ssh_keypair_ensure
+# # --
+# # Imports the private key at the given file, outputting the normalized key value.
+# # Will always return the private key as a its contents, not as a file.
+# function ls_privkey_import { # KEYPATH
+# 	local keypath="${1:-$(ls_pubkey_path)}"
+# 	local keyfmt=
+# 	local keypath_tmp=
+# 	local keyout_tmp=
+# 	if ls_ispath "$1" && [ -e "$1" ]; then
+# 		keyfmt="$(ls_key_id "$keypath")"
+# 	else
+# 		keypath_tmp="$(ls_mkstemp)"
+# 		echo -n "$keypath" | ls_decode >"$keypath_tmp"
+# 		keypath="$keypath_tmp"
+# 		keyfmt="$(ls_key_id "$keypath")"
+# 	fi
+# 	local res=0
+# 	case "$keyfmt" in
+# 	# We obviously only support private keys here
+# 	private:ssh*)
+# 		keyout_tmp=$(ls_mkstemp)
+# 		if ls_ispath "$keypath"; then
+# 			cp -a "$keypath" "$keyout_tmp"
+# 		else
+# 			echo "$keypath" >"$keyout_tmp"
+# 		fi
+# 		ls_log_output_start
+# 		ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2
+# 		ls_log_output_end
+# 		openssl rsa -in "$keyout_tmp"
+# 		unlink "$keyout_tmp"
+# 		;;
+# 	private:pkcs8*)
+# 		# That's what we want
+# 		cat "$keypath"
+# 		;;
+# 	*)
+# 		ls_log_error "ls_privkey_import: Unsupported format $keyfmt"
+# 		;;
+# 	esac
+# 	ls_unlink "$keypath_tmp" "$keyout_tmp"
+# }
 
 # --
 # Imports the key at the given file, outputting the normalized key value.
@@ -883,7 +904,7 @@ function ls_decrypt_sym { # KEY
 	local input_path=$(ls_mkstemp)
 	local output_path=$(ls_mkstemp)
 	# Read input first
-	cat > "$input_path"
+	cat >"$input_path"
 	if ! {
 		exec 3<"$key_path"
 		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3
@@ -1158,25 +1179,35 @@ function ls_user_pubkey { # USER? KEY?
 # retrieve the private key from the `LITTLESECRETS_KEY`, or use the
 # given `KEY` if provided.
 function ls_user_privkey { # KEY?
-	local keypath="${1:-$LITTLESECRETS_KEY}"
-	local keypath_fmt=$(ls_key_id "$keypath")
-	local keypath_pem="$keypath.pem"
-	local keypath_pem_fmt=$(ls_key_id "$keypath_pem")
-	if [[ "$keypath_fmt" == private:*pkcs8* ]]; then
-		# The given keypath is already in the right format
-		echo "$keypath"
-	elif [[ "$keypath_pem_fmt" == private:*pkcs8* ]]; then
-		# TODO: We should issue a warning if the PEM file is older than than the key
-		# The alternate keypath is in the right formt
-		echo "$keypath_pem"
+	local privkey_path
+	privkey_path=$(ls_privkey_path "${1:-$LITTLESECRETS_KEY}")
+	if [ -e "$privkey_path" ]; then
+		cat "$privkey_path"
 	else
-		if [ -e "$keypath" ]; then
-			ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format at $keypath"
-		else
-			ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format"
-		fi
-		ls_privkey_import "$keypath"
+		ls_log_error "ls_user_privkey: Could not find private key at: ${1:-$LITTLESECRETS_KEY}"
+		return 1
 	fi
+	# NOTE: Leaving this here for reference, should work better.
+	# local keypath="${1:-$LITTLESECRETS_KEY}"
+	# local keypath_fmt=$(ls_key_id "$keypath")
+	# local keypath_pem="$keypath.pem"
+	# local keypath_pem_fmt=$(ls_key_id "$keypath_pem")
+	# echo "XXX KEYPATH PEM: $keypath_pem_fmt" >&2
+	# if [[ "$keypath_fmt" == private:*pkcs8* ]]; then
+	# 	# The given keypath is already in the right format
+	# 	echo "$keypath"
+	# elif [[ "$keypath_pem_fmt" == private:*pkcs8* ]]; then
+	# 	# TODO: We should issue a warning if the PEM file is older than than the key
+	# 	# The alternate keypath is in the right formt
+	# 	echo "$keypath_pem"
+	# else
+	# 	if [ -e "$keypath" ]; then
+	# 		ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format at $keypath"
+	# 	else
+	# 		ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format"
+	# 	fi
+	# 	ls_privkey_import "$keypath"
+	# fi
 }
 
 # =============================================================================
@@ -1379,7 +1410,7 @@ function ls_secret_path { # SECRET
 	if [ ! -e "$secret_path/secret.enc" ]; then
 		return 1
 	else
-	echo "$secret_path"
+		echo "$secret_path"
 	fi
 }
 
@@ -1473,7 +1504,6 @@ function ls_secret_emit_json { # NAME VALUE
 	fi
 	unlink "$tmp"
 }
-
 
 function ls_secret_ensure { # NAME
 	if [ -z "${1:-}" ]; then
@@ -1808,7 +1838,7 @@ function ls_secret_export {
 function ls_secret_export_json_object {
 	local secname="$1"
 	local secval
-	
+
 	if ! ls_secret_verify "$secname"; then
 		# Skip secrets that can't be verified
 		printf "  {\n"
@@ -2242,8 +2272,8 @@ function ls_cli {
 					if [ -n "$username" ] && [ -n "$hostname" ]; then
 						user_hosts["$username"]+="$hostname "
 					fi
-				done <<< "$users"
-				
+				done <<<"$users"
+
 				# Output JSON object
 				for username in "${!user_hosts[@]}"; do
 					if [ "$first" = true ]; then

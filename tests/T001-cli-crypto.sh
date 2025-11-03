@@ -25,7 +25,7 @@ SECRET_DEC=$(echo -n "$SECRET_ENC" | test-expect-success ls_decrypt_sym "$KEY_EN
 test-expect "$SECRET_DEC" "$SECRET" "Secret symmetrically decoded"
 
 test-step "Asymmetric Keypair"
-test-expect "$(ls_key_id "$(ls_privkey_path)")" "private:rsa+pem+pkcs8:valid=rsa" "Private key recognized"
+test-expect "$(ls_key_id "$(ls_privkey_path)")" "private:pkcs8:valid=rsa" "Private key recognized"
 test-expect "$(ls_key_id "$(ls_pubkey_path)")" "public:spki:" "Public key recognized"
 
 # NOTE: If you don't use ls_encode/ls_decode, then the contents will be mangled
