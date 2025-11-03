@@ -740,25 +740,27 @@ function ls_key_id_match { #TYPE FORMATS
 	return 1
 }
 
+# TODO: Shoudl be ls_key_fmt
 # --
 # Outputs the type/format of the key, in `:` separated form
 # 1) Key type, `public` or `private` or `unknown`
 # 2) Key format, `+` separated, like `pkcs8+rsa`
 # 3) `valid` if the format was validated, otherwise nothing
-function ls_key_id {
+function ls_key_id { ## KEY_OR_PATH?
 	# Function to analyze a single file
 	local file="${1:-}"
 	local tmp_file=""
 	if [ -z "$file" ]; then
+		# If there's no file, we read from stding
 		tmp_file="$(ls_mkstemp)"
 		cat /dev/stdin >"$tmp_file"
 		file="$tmp_file"
-	fi
-
-	# Skip if not a regular file
-	if [ ! -f "$file" ]; then
-		echo "!nofile=$file"
-		return 1
+	elif [ ! -f "$file" ]; then
+		# If the argument is not a file, we create a temp file with
+		# the contents
+		tmp_file="$(ls_mkstemp)"
+		echo -n "$file" >"$tmp_file"
+		file="$tmp_file"
 	fi
 
 	# Check for SSH public key format
@@ -1105,7 +1107,6 @@ function ls_user_list_keys { # USER? HOST?
 function ls_pubkey_meta { # KEY
 	local key="${1:-}"
 	local fmt="$(ls_key_id "$key")"
-
 	case "$fmt" in
 	public:ssh*)
 		ls_key_cat "$key" | rev | cut -d' ' -f1 | rev
@@ -1179,35 +1180,32 @@ function ls_user_pubkey { # USER? KEY?
 # retrieve the private key from the `LITTLESECRETS_KEY`, or use the
 # given `KEY` if provided.
 function ls_user_privkey { # KEY?
-	local privkey_path
-	privkey_path=$(ls_privkey_path "${1:-$LITTLESECRETS_KEY}")
-	if [ -e "$privkey_path" ]; then
-		cat "$privkey_path"
+	if [ -z "${1:-}" ]; then
+		local privkey_path
+		privkey_path=$(ls_privkey_path "${1:-$LITTLESECRETS_KEY}")
+		if [ -e "$privkey_path" ]; then
+			cat "$privkey_path"
+		else
+			ls_log_error "ls_user_privkey: Could not find private key at: ${1:-$LITTLESECRETS_KEY}"
+			return 1
+		fi
 	else
-		ls_log_error "ls_user_privkey: Could not find private key at: ${1:-$LITTLESECRETS_KEY}"
-		return 1
+		local key="$1"
+		local key_fmt=$(ls_key_id "$key")
+		if [[ "$key_fmt" == private:*pkcs8* ]]; then
+			# The given keypath is already in the right format
+			echo "$key"
+		else
+			ls_log_error "ls_user_privkey: Given key is not in PKCS8 format"
+			# if [ -e "$keypath" ]; then
+			# 	ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format at $keypath"
+			# else
+			# 	ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format"
+			# fi
+			# ls_privkey_import "$keypath"
+			return 1
+		fi
 	fi
-	# NOTE: Leaving this here for reference, should work better.
-	# local keypath="${1:-$LITTLESECRETS_KEY}"
-	# local keypath_fmt=$(ls_key_id "$keypath")
-	# local keypath_pem="$keypath.pem"
-	# local keypath_pem_fmt=$(ls_key_id "$keypath_pem")
-	# echo "XXX KEYPATH PEM: $keypath_pem_fmt" >&2
-	# if [[ "$keypath_fmt" == private:*pkcs8* ]]; then
-	# 	# The given keypath is already in the right format
-	# 	echo "$keypath"
-	# elif [[ "$keypath_pem_fmt" == private:*pkcs8* ]]; then
-	# 	# TODO: We should issue a warning if the PEM file is older than than the key
-	# 	# The alternate keypath is in the right formt
-	# 	echo "$keypath_pem"
-	# else
-	# 	if [ -e "$keypath" ]; then
-	# 		ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format at $keypath"
-	# 	else
-	# 		ls_log_action "ls_user_privkey: Importing private key to PKCS8/PEM format"
-	# 	fi
-	# 	ls_privkey_import "$keypath"
-	# fi
 }
 
 # =============================================================================

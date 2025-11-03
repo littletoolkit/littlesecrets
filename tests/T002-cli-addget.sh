@@ -29,7 +29,7 @@ test-expect "$(ls_secret_get hello.world)" "$SECRET"
 
 # --
 # Second step is to generate a new private key, and make sure
-# we can't decrypt the secet
+# we can't decrypt the secret
 test-step "Generation of a new private key"
 PRIVKEY=$(test-expect-success ls_privkey_new)
 
