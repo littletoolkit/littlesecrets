@@ -404,8 +404,47 @@ function ls_json_escape() {
 	str="${str//$'\n'/\\n}"
 	str="${str//$'\r'/\\r}"
 	str="${str//$'\t'/\\t}"
-	# Escape other control characters (ASCII 0-31)
-	printf '%s' "$str" | sed 's/[\x00-\x1f]/\\u00&/g'
+	# Escape other control characters (ASCII 0-31) using a more portable approach
+	# Try different methods in order of preference
+	if command -v awk >/dev/null 2>&1; then
+		# Use awk with a more portable approach
+		printf '%s' "$str" | awk '
+		BEGIN {
+			for (i = 0; i <= 31; i++) {
+				if (i != 9 && i != 10 && i != 13) {  # Skip tab, newline, carriage return
+					ctrl[sprintf("%c", i)] = sprintf("\\u00%02X", i)
+				}
+			}
+		}
+		{
+			result = ""
+			for (i = 1; i <= length($0); i++) {
+				char = substr($0, i, 1)
+				if (char in ctrl) {
+					result = result ctrl[char]
+				} else {
+					result = result char
+				}
+			}
+			printf "%s", result
+		}
+		' 2>/dev/null && return 0
+	fi
+	
+	# Fallback: use a loop with printf for each character
+	local result=""
+	local i
+	for ((i=0; i<${#str}; i++)); do
+		local char="${str:$i:1}"
+		local ascii_val
+		ascii_val=$(printf '%d' "'$char" 2>/dev/null || echo 0)
+		if (( ascii_val >= 0 && ascii_val <= 31 )) && [[ "$char" != $'\n' && "$char" != $'\r' && "$char" != $'\t' ]]; then
+			result+="\\u00$(printf '%02X' "$ascii_val")"
+		else
+			result+="$char"
+		fi
+	done
+	printf '%s' "$result"
 }
 
 # Function: ls_json_string [STRING]
