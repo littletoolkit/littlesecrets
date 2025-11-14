@@ -35,6 +35,7 @@ The tool uses the following environment variables:
 - `LITTLESECRETS_USER` name of the user, defaults to `$USER`
 - `LITTLESECRETS_KEY` path to the user's SSH private key, defaults to `$HOME/.ssh/id_rsa`
 - `LITTLESECRETS_STORE` defaults to the name or path of the store, defaults to `.littlesecrets`
+- `LITTLESECRETS_OPENSSL_BIN` path to the OpenSSL binary, defaults to `openssl`. This is validated at startup (must be executable, cannot contain shell metacharacters) and made readonly to prevent tampering.
 
 Noting that:
 
@@ -42,4 +43,5 @@ Noting that:
   and can be either the public or private key, in either SSH or OpenSSL format. The CLI tool
   will automatically perform conversions and will fail if the key is not expected (ie. a private
   key is required when a public key is given).
+- The `LITTLESECRETS_OPENSSL_BIN` variable is security-sensitive. It is validated to ensure it points to a real executable file and does not contain command injection attempts. The validation happens once at script startup and the variable is then made readonly.
 

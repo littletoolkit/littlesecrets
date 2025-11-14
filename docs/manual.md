@@ -120,6 +120,9 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **LITTLESECRETS_OPTIONS**
 : Comma-separated list of options (default: hmac)
 
+**LITTLESECRETS_OPENSSL_BIN**
+: Path to the OpenSSL binary (default: openssl). This variable is validated at startup and made readonly to prevent tampering. The path must point to an executable file and cannot contain shell metacharacters. For security, use absolute paths when possible.
+
 # FILES
 
 *.littlesecrets/*

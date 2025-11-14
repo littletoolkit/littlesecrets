@@ -32,6 +32,60 @@ LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
 LITTLESECRETS_KEYSIZE=${LITTLESECRETS_KEYSIZE:-2048} # NOTE: It would be best to do 4096, and we should test keys
 # --
+# Validate and secure the OpenSSL binary path
+function ls_validate_openssl_bin {
+	local bin="${1:-openssl}"
+	local resolved_bin=""
+	
+	# Check for command injection attempts (spaces, semicolons, pipes, redirects, etc.)
+	if [[ "$bin" =~ [[:space:]\;\|\&\$\`\<\>] ]]; then
+		echo "SECURITY ERROR: LITTLESECRETS_OPENSSL_BIN contains invalid characters: $bin" >&2
+		echo "The OpenSSL binary path must not contain spaces, semicolons, pipes, or shell metacharacters" >&2
+		exit 1
+	fi
+	
+	# Resolve to absolute path
+	if [[ "$bin" == /* ]]; then
+		# Already absolute path
+		resolved_bin="$bin"
+	else
+		# Find in PATH using command -v
+		resolved_bin="$(command -v "$bin" 2>/dev/null)"
+		if [ -z "$resolved_bin" ]; then
+			echo "ERROR: Cannot find OpenSSL binary '$bin' in PATH" >&2
+			echo "Please ensure OpenSSL is installed or set LITTLESECRETS_OPENSSL_BIN to the correct path" >&2
+			exit 1
+		fi
+	fi
+	
+	# Verify it's a regular file (not a directory or special file)
+	if [ ! -f "$resolved_bin" ]; then
+		echo "ERROR: '$resolved_bin' is not a regular file" >&2
+		exit 1
+	fi
+	
+	# Verify it's executable
+	if [ ! -x "$resolved_bin" ]; then
+		echo "ERROR: '$resolved_bin' is not executable" >&2
+		echo "Please check file permissions" >&2
+		exit 1
+	fi
+	
+	# Verify it's actually OpenSSL by checking version output
+	# This prevents someone from substituting a malicious binary
+	if ! "$resolved_bin" version 2>/dev/null | grep -qiE "openssl|libressl"; then
+		echo "WARNING: '$resolved_bin' does not appear to be OpenSSL or LibreSSL" >&2
+		echo "Output from '$resolved_bin version':" >&2
+		"$resolved_bin" version 2>&1 | head -3 >&2
+		echo "Proceeding anyway, but cryptographic operations may fail" >&2
+	fi
+	
+	echo "$resolved_bin"
+}
+# Validate and make readonly to prevent mid-flight tampering
+LITTLESECRETS_OPENSSL_BIN="$(ls_validate_openssl_bin "${LITTLESECRETS_OPENSSL_BIN:-openssl}")"
+readonly LITTLESECRETS_OPENSSL_BIN
+# --
 # Options:
 # - hmac: stores the secret HMAC for verification
 LITTLESECRETS_OPTIONS=${LITTLESECRETS_OPTIONS:-hmac}
@@ -352,7 +406,7 @@ function ls_option { # OPTION
 # This is to make sure we
 
 # Generate a random 256-bit encryption key when the script starts
-LS_VALUE_ENCRYPTION_KEY=$(openssl rand -hex 32)
+LS_VALUE_ENCRYPTION_KEY=$("$LITTLESECRETS_OPENSSL_BIN" rand -hex 32)
 LS_VALUE_ENCRYPTION_IV="00000000000000000000000000000000"
 
 # Function: ls_value_encrypt [STDIN] [STDOUT]
@@ -368,7 +422,7 @@ function ls_value_encrypt() {
 	# -K: hex key
 	# -iv: initialization vector (using fixed IV for simplicity, but you could generate random)
 	# -nosalt: don't use salt (for consistency)
-	openssl enc -e -aes-256-cbc \
+	"$LITTLESECRETS_OPENSSL_BIN" enc -e -aes-256-cbc \
 		-K "$LS_VALUE_ENCRYPTION_KEY" \
 		-iv "$LS_VALUE_ENCRYPTION_IV" \
 		-nosalt 2>/dev/null || return 1
@@ -381,7 +435,7 @@ function ls_value_decrypt() {
 		ls_log_error "LS_VALUE_ENCKEY not set"
 		return 1
 	fi
-	openssl enc -d -aes-256-cbc \
+	"$LITTLESECRETS_OPENSSL_BIN" enc -d -aes-256-cbc \
 		-K "$LS_VALUE_ENCRYPTION_KEY" \
 		-iv "$LS_VALUE_ENCRYPTION_IV" \
 		-nosalt 2>/dev/null || return 1
@@ -494,7 +548,7 @@ function ls_file_base64() {
 	if [ -z "$path" ] || [ ! -f "$path" ]; then
 		return 1
 	fi
-	openssl base64 -A <"$path"
+	"$LITTLESECRETS_OPENSSL_BIN" base64 -A <"$path"
 }
 
 # Function: ls_json_emit_key_array KEY [ITEM...]
@@ -546,7 +600,7 @@ function ls_ssh_keypair_ensure { # KEYPATH
 		return 1
 	fi
 	local key_id
-	key_id=$(openssl dgst -sha256 "$privkey_path" | cut -d' ' -f2 | cut -c1-16)
+	key_id=$("$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 "$privkey_path" | cut -d' ' -f2 | cut -c1-16)
 	local privkey_parent=$(dirname "$(realpath "$privkey_path")")
 	local privkey_pem_path="${privkey_parent}/littlesecrets-${key_id}.pem"
 	local pubkey_pem_path="${privkey_parent}/littlesecrets-${key_id}.pem.pub"
@@ -561,7 +615,7 @@ function ls_ssh_keypair_ensure { # KEYPATH
 		# SSH key is in DER format, we need PEM
 		ls_log_output_start
 		ssh-keygen -q -p -m pem -N '' -f "${privkey_pem_path}.ssh" >&2
-		openssl rsa -in "${privkey_pem_path}.ssh" -out "${privkey_pem_path}" >&2
+		"$LITTLESECRETS_OPENSSL_BIN" rsa -in "${privkey_pem_path}.ssh" -out "${privkey_pem_path}" >&2
 		ls_log_output_end
 		unlink "${privkey_pem_path}.ssh"
 		chmod 400 "$privkey_pem_path"
@@ -573,7 +627,7 @@ function ls_ssh_keypair_ensure { # KEYPATH
 		fi
 		ls_log_action "Deriving PKCS8 public key from RSA PEM private key: $pubkey_pem_path"
 		ls_log_output_start
-		openssl rsa -in "$privkey_pem_path" -pubout -out "$pubkey_pem_path" >&2
+		"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$privkey_pem_path" -pubout -out "$pubkey_pem_path" >&2
 		ls_log_output_end
 		chmod 400 "$pubkey_pem_path"
 	fi
@@ -601,10 +655,10 @@ function ls_pubkey_path { #KEYPATH
 function ls_privkey_new { #KEYPATH
 	ls_mkparent "${1:-}"
 	if [ -n "${1:-}" ]; then
-		openssl genrsa -out "$1" 4096
+		"$LITTLESECRETS_OPENSSL_BIN" genrsa -out "$1" 4096
 	else
 		# When no path is provided, output to stdout directly
-		openssl genrsa 4096
+		"$LITTLESECRETS_OPENSSL_BIN" genrsa 4096
 	fi
 }
 
@@ -677,14 +731,14 @@ function ls_pubkey_import { #KEYPATH
 		if ! ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2; then
 			res=$?
 		else
-			openssl rsa -in "$keyout_tmp" -pubout
+			"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$keyout_tmp" -pubout
 			res=$?
 		fi
 		ls_log_output_end
 		unlink "$keyout_tmp"
 		;;
 	private:pkcs8*)
-		openssl rsa -in "$keypath" -pubout
+		"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$keypath" -pubout
 		res=$?
 		;;
 	public:ssh+rsa*)
@@ -793,10 +847,10 @@ function ls_key_id { ## KEY_OR_PATH?
 	fi
 
 	# Additional OpenSSL analysis
-	if command -v openssl >/dev/null 2>&1; then
-		if openssl rsa -in "$file" -noout 2>/dev/null; then
+	if command -v "$LITTLESECRETS_OPENSSL_BIN" >/dev/null 2>&1; then
+		if "$LITTLESECRETS_OPENSSL_BIN" rsa -in "$file" -noout 2>/dev/null; then
 			echo ":valid=rsa"
-		elif openssl ec -in "$file" -noout 2>/dev/null; then
+		elif "$LITTLESECRETS_OPENSSL_BIN" ec -in "$file" -noout 2>/dev/null; then
 			echo ":valid=ec"
 		else
 			echo ":"
@@ -830,7 +884,7 @@ function ls_encoded {
 # Safely encodes binary data to be stored in a variable
 function ls_encode {
 	echo -n "@LS:"
-	openssl base64 -A </dev/stdin
+	"$LITTLESECRETS_OPENSSL_BIN" base64 -A </dev/stdin
 }
 
 # --
@@ -839,7 +893,7 @@ function ls_decode {
 	local prefix
 	read -n4 prefix
 	if [ "$prefix" == "@LS:" ]; then
-		openssl base64 -d -A </dev/stdin
+		"$LITTLESECRETS_OPENSSL_BIN" base64 -d -A </dev/stdin
 	else
 		echo -n "$prefix"
 		cat </dev/stdin
@@ -853,7 +907,7 @@ function ls_key {
 	# RSA 4096bits -> 512bytes
 	# PKCS requires 11bytes padding, OAEP 42bytes
 	local ks=$((LITTLESECRETS_KEYSIZE / 8 - 42))
-	openssl rand "${1:-$ks}" | ls_encode
+	"$LITTLESECRETS_OPENSSL_BIN" rand "${1:-$ks}" | ls_encode
 }
 
 # --
@@ -864,7 +918,7 @@ function ls_encrypt_sym { # KEY
 	if ! {
 		# NOTE: The fd anonymises the key path
 		exec 3<"$key_path"
-		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out "$output_path" -pass fd:3
+		"$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out "$output_path" -pass fd:3
 		local openssl_res=$?
 		exec 3<&-
 		if [ $openssl_res -eq 0 ]; then
@@ -891,7 +945,7 @@ function ls_hmac {
 	if [ -z "$key" ]; then
 		ls_log_error "ls_hmac: Given key is empty"
 		return 1
-	elif ! openssl dgst -sha256 -hmac "$(printf '%s' "$key" | xxd -r -p)" | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]'; then
+	elif ! "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -hmac "$(printf '%s' "$key" | xxd -r -p)" | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]'; then
 		ls_log_error "ls_hmac: Could not generate secret HMAC"
 	fi
 	ls_log_output_end
@@ -909,7 +963,7 @@ function ls_decrypt_sym { # KEY
 	cat >"$input_path"
 	if ! {
 		exec 3<"$key_path"
-		openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3
+		"$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3
 		local openssl_res=$?
 		exec 3<&-
 		if [ $openssl_res -eq 0 ]; then
@@ -945,7 +999,7 @@ function ls_encrypt_asym { # PUBKEY? PATH?
 	fi
 	ls_log_output_start
 	local output_path=$(ls_mkstemp)
-	if ! openssl pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out "$output_path"; then
+	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out "$output_path"; then
 		res=1
 		ls_log_error "ls_encrypt_asym: Could not asymmetrically encrypt secret"
 	else
@@ -979,7 +1033,7 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	fi
 	ls_log_output_start
 	local output_path=$(ls_mkstemp)
-	if ! openssl pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path"; then
+	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path"; then
 		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$?]"
 		res=1
 	else
@@ -1436,9 +1490,9 @@ function ls_secret_key { # SECRET PRIVKEY?
 # passed as argument, or read from stding.
 function ls_secret_hmac_key {
 	if [ -z "${1:-}" ]; then
-		ls_decode </dev/stdin | openssl dgst -sha256 -binary | xxd -p -c 64
+		ls_decode </dev/stdin | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | xxd -p -c 64
 	else
-		printf '%s' "$1" | ls_decode | openssl dgst -sha256 -binary | xxd -p -c 64
+		printf '%s' "$1" | ls_decode | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | xxd -p -c 64
 	fi
 }
 
@@ -1531,7 +1585,7 @@ function ls_secret_ensure { # NAME
 		local random_secret
 		# Generate 16 random ASCII characters (alphanumeric)
 		# Use more base64 data to ensure we get 16 chars after filtering
-		random_secret=$(openssl rand -base64 20 | tr -d '=+/' | tr -d '\\n' | cut -c1-16)
+		random_secret=$("$LITTLESECRETS_OPENSSL_BIN" rand -base64 20 | tr -d '=+/' | tr -d '\\n' | cut -c1-16)
 		if [ -z "$random_secret" ]; then
 			ls_log_error "ensure: Failed to generate random secret"
 			return 1
