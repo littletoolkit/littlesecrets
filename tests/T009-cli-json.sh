@@ -8,6 +8,12 @@ source "$BASE/tests/lib-testing.sh"
 
 test-start
 
+# Capture the current user@host for test assertions
+CURRENT_USER="${LITTLESECRETS_USER:-$USER}"
+CURRENT_HOST="${LITTLESECRETS_HOST:-$HOSTNAME}"
+CURRENT_USER_HOST="${CURRENT_USER}@${CURRENT_HOST}"
+CURRENT_USER_COLON="${CURRENT_USER}:${CURRENT_HOST}"
+
 test-step "Init store"
 ls_store_init || test-fail "Could not init store"
 
@@ -37,7 +43,7 @@ JSON_LIST=$(ls_cli -f json list)
 echo "$JSON_LIST" | grep -q '"secret1"' || test-fail "JSON list should contain secret1"
 echo "$JSON_LIST" | grep -q '"secret2"' || test-fail "JSON list should contain secret2"
 echo "$JSON_LIST" | grep -q '"binary-secret"' || test-fail "JSON list should contain binary-secret"
-echo "$JSON_LIST" | grep -q '"sebastien@bench"' || test-fail "JSON list should contain current user"
+echo "$JSON_LIST" | grep -q "\"$CURRENT_USER_HOST\"" || test-fail "JSON list should contain current user"
 # Verify it's valid JSON structure
 echo "$JSON_LIST" | grep -q '{' || test-fail "JSON list should start with brace"
 echo "$JSON_LIST" | grep -q '}' || test-fail "JSON list should end with brace"
@@ -107,10 +113,10 @@ fi
 
 test-step "Test JSON format for users command"
 JSON_USERS=$(ls_cli -f json users)
-echo "$JSON_USERS" | grep -q '"sebastien"' || test-fail "JSON users should contain sebastien"
+echo "$JSON_USERS" | grep -q "\"$CURRENT_USER\"" || test-fail "JSON users should contain current user"
 echo "$JSON_USERS" | grep -q '"user1"' || test-fail "JSON users should contain user1"
 echo "$JSON_USERS" | grep -q '"user2"' || test-fail "JSON users should contain user2"
-echo "$JSON_USERS" | grep -q '"bench"' || test-fail "JSON users should contain bench host"
+echo "$JSON_USERS" | grep -q "\"$CURRENT_HOST\"" || test-fail "JSON users should contain current host"
 echo "$JSON_USERS" | grep -q '"host1"' || test-fail "JSON users should contain host1"
 echo "$JSON_USERS" | grep -q '"host2"' || test-fail "JSON users should contain host2"
 # Verify it's valid JSON structure
@@ -123,7 +129,7 @@ JSON_ACCESS=$(ls_cli -f json access)
 echo "$JSON_ACCESS" | grep -q '"secret1"' || test-fail "JSON access should contain secret1"
 echo "$JSON_ACCESS" | grep -q '"secret2"' || test-fail "JSON access should contain secret2"
 echo "$JSON_ACCESS" | grep -q '"binary-secret"' || test-fail "JSON access should contain binary-secret"
-echo "$JSON_ACCESS" | grep -q '"sebastien@bench"' || test-fail "JSON access should contain current user"
+echo "$JSON_ACCESS" | grep -q "\"$CURRENT_USER_HOST\"" || test-fail "JSON access should contain current user"
 echo "$JSON_ACCESS" | grep -q '"user1@host1"' || test-fail "JSON access should contain user1@host1"
 echo "$JSON_ACCESS" | grep -q '"user2@host2"' || test-fail "JSON access should contain user2@host2"
 # Verify it's valid JSON structure
@@ -154,17 +160,17 @@ test-step "Test that default text format still works"
 TEXT_LIST=$(ls_cli list)
 echo "$TEXT_LIST" | grep -q 'secret1' || test-fail "Text list should contain secret1"
 echo "$TEXT_LIST" | grep -q 'secret2' || test-fail "Text list should contain secret2"
-echo "$TEXT_LIST" | grep -q 'sebastien@bench' || test-fail "Text list should contain user info"
+echo "$TEXT_LIST" | grep -q "$CURRENT_USER_HOST" || test-fail "Text list should contain user info"
 
 TEXT_GET=$(ls_cli get secret1)
 test-expect "$TEXT_GET" "value1" "Text get should return plain value"
 
 TEXT_USERS=$(ls_cli users)
-echo "$TEXT_USERS" | grep -q 'sebastien:bench' || test-fail "Text users should contain user:host format"
+echo "$TEXT_USERS" | grep -q "$CURRENT_USER_COLON" || test-fail "Text users should contain user:host format"
 
 TEXT_ACCESS=$(ls_cli access)
 echo "$TEXT_ACCESS" | grep -q 'secret1:' || test-fail "Text access should contain secret1:"
-echo "$TEXT_ACCESS" | grep -q 'sebastien@bench' || test-fail "Text access should contain user info"
+echo "$TEXT_ACCESS" | grep -q "$CURRENT_USER_HOST" || test-fail "Text access should contain user info"
 
 TEXT_EXPORT=$(ls_cli export)
 echo "$TEXT_EXPORT" | grep -q "export SECRET1='value1'" || test-fail "Text export should contain shell export format"

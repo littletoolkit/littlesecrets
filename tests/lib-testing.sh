@@ -577,7 +577,9 @@ function test_prefix {
 }
 
 function test_nocolor {
-	sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\x1b(B//g' -e 's/[\x00-\x1f\x7f]//g'
+	# Use printf to generate control chars for BSD sed compatibility
+	# Remove ANSI escape sequences and control characters
+	LC_ALL=C sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\x1b(B//g' -e 's/[[:cntrl:]]//g'
 
 }
 # -----------------------------------------------------------------------------
