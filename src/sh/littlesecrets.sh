@@ -35,6 +35,7 @@ LITTLESECRETS_KEYSIZE=${LITTLESECRETS_KEYSIZE:-2048} # NOTE: It would be best to
 # Options:
 # - hmac: stores the secret HMAC for verification
 LITTLESECRETS_OPTIONS=${LITTLESECRETS_OPTIONS:-hmac}
+LITTLESECRETS_VERSION="1.0.0a"
 
 # -----------------------------------------------------------------------------
 #
@@ -890,8 +891,7 @@ function ls_hmac {
 	if [ -z "$key" ]; then
 		ls_log_error "ls_hmac: Given key is empty"
 		return 1
-	elif ! openssl mac -macopt hexkey:"$key" -digest sha256 hmac | cut -d' ' -f2; then
-
+	elif ! openssl dgst -sha256 -hmac "$(printf '%s' "$key" | xxd -r -p)" | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]'; then
 		ls_log_error "ls_hmac: Could not generate secret HMAC"
 	fi
 	ls_log_output_end
@@ -1965,7 +1965,6 @@ function ls_info {
 
 function ls_cli {
 	# Define version
-	local VERSION="1.0.0"
 
 	# Parse global options first
 
@@ -2055,7 +2054,7 @@ function ls_cli {
 		;;
 	## version           Show version information
 	"version" | v)
-		echo "littlesecrets version $VERSION"
+		echo "littlesecrets version $LITTLESECRETS_VERSION"
 		return 0
 		;;
 	## init [path]        Initialize a new secrets store
@@ -2179,7 +2178,7 @@ function ls_cli {
 		for SECRET_NAME in $(ls_secret_list "$@"); do
 			SECRET_NAME="${SECRET_NAME%%:*}"
 			HMAC_PATH="$(ls_secret_hmac_path "$SECRET_NAME")"
-			echo -n "Verifying $SECRET_NAME… "
+			echo -n "Verifying ${SECRET_NAME}… "
 			if [ ! -e "$HMAC_PATH" ]; then
 				# NOTE: Leaving this for reference
 				if HMAC=$(ls_secret_hmac "$SECRET_NAME"); then
