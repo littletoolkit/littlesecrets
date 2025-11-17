@@ -930,23 +930,28 @@ function ls_encrypt_sym { # KEY
 	unlink "$key_path" "$output_path"
 }
 
-# Function: ls_hmac KEY
+# Function: ls_hmac KEY PATH?
 # Calculates the hmac value of the given secret, typically used with the
 # secret key.
-# - Should be in hex (xxd) format
+# - Should be in hex (xxd) format, as given by `ls_hmac_key`
 # - Key will be leaked to /proc, so should not be a secret
 # - Use `ls_hmac_key` to pre-process your key
 function ls_hmac {
-	ls_log_output_start
 	local key="${1:-}"
+	local path="${2:-/dev/stdin}"
 	key="${key//[[:space:]]/}" # Trim whitespace
 	if [ -z "$key" ]; then
 		ls_log_error "ls_hmac: Given key is empty"
 		return 1
-	elif ! "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -hmac "$(printf '%s' "$key" | xxd -r -p)" | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]'; then
+	# NOTE: Super important here, we keep the KEY in XXD format, as otherwise
+	# it may contain NULL bytes and screw the whole process. It's OK to pass
+	# the key in this format, the derivation is stable and the entropy 
+	# preserved. Not that any change in the key format though will lead 
+	# to a different HMAC signature.
+	elif ! "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -hmac "${key}" < "$path" | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]'; then
 		ls_log_error "ls_hmac: Could not generate secret HMAC"
+		return 1
 	fi
-	ls_log_output_end
 }
 
 # --
@@ -1489,6 +1494,7 @@ function ls_secret_key { # SECRET PRIVKEY?
 # hash, and returning it as encoded to preserve entropy. The key value is either
 # passed as argument, or read from stding.
 function ls_secret_hmac_key {
+	# NOTE: Any change in this format will then impact the HMAC signature
 	if [ -z "${1:-}" ]; then
 		ls_decode </dev/stdin | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | xxd -p -c 64
 	else
@@ -1516,6 +1522,7 @@ function ls_secret_hmac { # SECRET_NAME SECRET_ENC_KEY?
 	else
 		ls_secret_get "$1" | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
 	fi
+	return 0
 }
 
 function ls_secret_hmac_path { #SECRET
@@ -1660,7 +1667,7 @@ function ls_secret_verify { # NAME PRIVEY?
 	fi
 	local hmac
 	if ! hmac="$(ls_secret_hmac "$1" "$(ls_secret_key "$1" "${2:-}")")"; then
-		ls_log_error "Could not compute HMAC for secret $1"
+		ls_log_error "Verify could not compute HMAC for secret $1"
 		return 1
 	elif [ "$(cat "$secret_hmac_path")" != "$hmac" ]; then
 		return 1
