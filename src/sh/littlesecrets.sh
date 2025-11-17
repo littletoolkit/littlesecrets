@@ -162,12 +162,10 @@ export RESET
 # -----------------------------------------------------------------------------
 
 LS_LOG_PREFIX="${DIM}[ls]${RESET}"
-LS_LOG_FILTER="warning tip"
+LS_LOG_FILTER="warning tip action"
 
 function ls_log {
-	if [[ "$LS_LOG_FILTER" = *"log"* ]]; then
-		echo "${LS_LOG_PREFIX}$*${RESET}" >&2
-	fi
+	echo "${LS_LOG_PREFIX}$*${RESET}" >&2
 }
 
 function ls_log_action {
@@ -1114,6 +1112,8 @@ function ls_user_register { # USER? KEY?
 	local user="$(ls_user_name "${1:-}")"
 	local host="$(ls_user_host "${1:-}" "${2:-$LITTLESECRETS_KEY}")"
 	local key="$(ls_pubkey_import "${2:-$LITTLESECRETS_KEY}")"
+	ls_log_action "Registering user '$user' on '$host' from key '${2:-$LITTLESECRETS_KEY}'"
+
 	local user_key_path="$store/user/$user/$host.pubkey"
 	if [ -z "$key" ]; then
 		ls_log_error "Could not import user public key: $(ls_pubkey_path "${1:-}" "${2:-}")"
