@@ -23,6 +23,8 @@ shopt -s extglob
 declare -a LS_CLEANUP=()
 LS_CLEANUP+=("")
 
+LITTLESECRETS_VERSION="1.0.1"
+
 # --
 # And define the configuration
 LITTLESECRETS_USER=${LITTLESECRETS_USER:-$USER}
@@ -89,7 +91,6 @@ readonly LITTLESECRETS_OPENSSL_BIN
 # Options:
 # - hmac: stores the secret HMAC for verification
 LITTLESECRETS_OPTIONS=${LITTLESECRETS_OPTIONS:-hmac}
-LITTLESECRETS_VERSION="1.0.0a"
 
 # -----------------------------------------------------------------------------
 #
