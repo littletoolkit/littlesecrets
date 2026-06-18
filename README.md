@@ -44,16 +44,16 @@ littlesecrets init
 echo -n "SECRET!" | littlesecret add my.little.secret
 
 # Retrieve the secret
-littlesecret get my.little.secret
+littlesecrets get my.little.secret
 
 # Register someone's RSA public key
-littlesecret register alice alice.rsa.pubkey
+littlesecrets register alice alice.rsa.pubkey
 
 # Alternatively, if you share the repository the other user can simply
 # do a `littlesecrets register` so that their key is registered.
 
 # Grant access to the secret
-littlesecret grant my.little.secret alice
+littlesecrets grant my.little.secret alice
 ```
 
 ## Use Cases
