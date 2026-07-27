@@ -100,8 +100,11 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **has** *EXPR*...
 : Check if secrets matching glob expressions exist. Returns exit code 0 if any secrets match, 1 otherwise. Designed for scripting and conditional logic. Supports multiple patterns combined with OR logic.
 
+**find** *NAMEISH*
+: Find matching secrets in all `.littlesecrets` repositories in the current directory and its ancestors.
+
 **info**
-: Show repository information including path, users, and secrets
+: Show repository information including path, users, secrets, and other ancestor repositories
 
 # ENVIRONMENT
 

@@ -292,6 +292,29 @@ function ls_find {
 	return 1
 }
 
+# --
+# Finds all matching stores in the current directory and its ancestors.
+function ls_find_all {
+	local search_path="$1"
+	if [[ "$search_path" == */* ]]; then
+		if [ -e "$search_path" ]; then
+			echo "$search_path"
+			return 0
+		fi
+		return 1
+	fi
+	local current_dir="$PWD"
+	while true; do
+		if [ -e "$current_dir/$search_path" ]; then
+			echo "$current_dir/$search_path"
+		fi
+		if [ "$current_dir" = "/" ]; then
+			break
+		fi
+		current_dir="$(dirname "$current_dir")"
+	done
+}
+
 function ls_mkparent {
 	for path in "$@"; do
 		local parent
@@ -1065,6 +1088,10 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 # Finds a matching store
 function ls_store {
 	ls_find "$LITTLESECRETS_STORE"
+}
+
+function ls_store_list {
+	ls_find_all "$LITTLESECRETS_STORE"
 }
 
 function ls_store_init {
@@ -1974,6 +2001,16 @@ function ls_info {
 	local secrets
 	secrets=$(ls_secret_list | tr '\n' ' ' | sed 's/ $//')
 
+	# List ancestor stores other than the current store.
+	local repositories=""
+	local repository
+	for repository in $(ls_store_list); do
+		if [ "$(realpath "$repository")" != "$abs_path" ]; then
+			repositories+="$(realpath "$repository") "
+		fi
+	done
+	repositories="${repositories% }"
+
 	if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
 		# JSON output format
 		echo "{"
@@ -2001,6 +2038,17 @@ function ls_info {
 			fi
 			printf '%s' "$(ls_json_string "$secret")"
 		done
+		printf '],\n'
+		printf '  "repositories": ['
+		first=true
+		for repository in $repositories; do
+			if [ "$first" = true ]; then
+				first=false
+			else
+				printf ', '
+			fi
+			printf '%s' "$(ls_json_string "$repository")"
+		done
 		printf ']\n'
 		echo "}"
 	else
@@ -2016,6 +2064,39 @@ function ls_info {
 		else
 			echo "Secrets: (none)"
 		fi
+		if [ -n "$repositories" ]; then
+			echo "Repositories: $repositories"
+		else
+			echo "Repositories: (none)"
+		fi
+	fi
+}
+
+function ls_secret_find {
+	local pattern="${1:-}"
+	if [ -z "$pattern" ]; then
+		ls_log_error "find: Missing secret pattern"
+		return 1
+	fi
+
+	local found=0
+	local repository
+	local secret_path
+	local secret_name
+	for repository in $(ls_store_list); do
+		for secret_path in "$repository"/secret/*/secret.enc; do
+			if [ ! -e "$secret_path" ]; then
+				continue
+			fi
+			secret_name="$(basename "$(dirname "$secret_path")")"
+			if ls_match "$secret_name" "$pattern" >/dev/null; then
+				printf '%s: %s\n' "$secret_name" "$(realpath "$repository")"
+				found=1
+			fi
+		done
+	done
+	if [ "$found" -eq 0 ]; then
+		return 1
 	fi
 }
 
@@ -2453,7 +2534,12 @@ function ls_cli {
 			return 1
 		fi
 		;;
-	## info              Show repository information (path, users, secrets)
+	## find <nameish>     Find matching secrets in all ancestor repositories
+	"find")
+		ls_secret_find "$@"
+		return $?
+		;;
+	## info              Show repository information (path, users, secrets, repositories)
 	"info")
 		ls_info "$@"
 		return $?

@@ -12,17 +12,19 @@ info
 
 ### Text Format (default)
 
-The command outputs three lines with KEY: VALUE format:
+The command outputs four lines with KEY: VALUE format:
 
 ```
 Path: <absolute-path-to-repo>
 Users: <user> <user> <user>
 Secrets: <secret> <secret> <secret>
+Repositories: <absolute-path-to-other-repo> <absolute-path-to-other-repo>
 ```
 
 - **Path**: Absolute path to the `.littlesecrets` store directory
 - **Users**: Space-separated list of unique usernames registered in the store
 - **Secrets**: Space-separated list of secret names stored in the repository
+- **Repositories**: Space-separated list of other `.littlesecrets` stores found in ancestor directories
 
 If there are no users or secrets, the value will be `(none)`.
 
@@ -34,7 +36,8 @@ When JSON format is requested, the output is a JSON object:
 {
   "path": "/absolute/path/to/.littlesecrets",
   "users": ["user1", "user2", "user3"],
-  "secrets": ["secret1", "secret2", "secret3"]
+  "secrets": ["secret1", "secret2", "secret3"],
+  "repositories": ["/absolute/path/to/other/.littlesecrets"]
 }
 ```
 
@@ -44,6 +47,7 @@ When JSON format is requested, the output is a JSON object:
 2. **Error Handling**: If no store is found, returns an error message and exit code 1
 3. **User Listing**: Extracts unique usernames from registered user keys (removes host information)
 4. **Secret Listing**: Lists all available secrets in the store
+5. **Repository Listing**: Lists other stores found while walking from the current directory to the filesystem root
 
 ## Examples
 
@@ -54,6 +58,7 @@ $ littlesecrets info
 Path: /home/user/project/.littlesecrets
 Users: alice bob
 Secrets: db.password api.key
+Repositories: /home/user/.littlesecrets
 ```
 
 ### Empty Store
@@ -63,6 +68,7 @@ $ littlesecrets info
 Path: /home/user/empty/.littlesecrets
 Users: (none)
 Secrets: (none)
+Repositories: (none)
 ```
 
 ### JSON Output
@@ -72,7 +78,8 @@ $ littlesecrets info --format=json
 {
   "path": "/home/user/project/.littlesecrets",
   "users": ["alice", "bob"],
-  "secrets": ["db.password", "api.key"]
+  "secrets": ["db.password", "api.key"],
+  "repositories": []
 }
 ```
 
@@ -83,6 +90,7 @@ $ littlesecrets --store /path/to/custom-store info
 Path: /path/to/custom-store
 Users: alice
 Secrets: secret1
+Repositories: (none)
 ```
 
 ## Return Codes
@@ -92,8 +100,9 @@ Secrets: secret1
 
 ## Implementation Notes
 
-- Uses `ls_store()` to locate the store
+- Uses `ls_store()` to locate the current store and `ls_store_list()` to locate ancestor stores
 - Uses `realpath()` to get absolute path
 - Uses `ls_user_list()` and extracts unique usernames with `cut -d: -f1 | sort -u`
 - Uses `ls_secret_list()` to get all secrets
 - Follows existing JSON formatting patterns used by other commands
+- The current store is excluded from `repositories`

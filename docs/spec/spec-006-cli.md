@@ -13,12 +13,14 @@ The tool should have the following CLI:
 - `deregister USER KEY?` de-registers the given key (or all key) for the given user
 - `ensure SECRET` ensures a secret exists (creates if missing)
 - `has EXPR…` checks if any secrets match the given patterns (returns 0 if found, 1 if not found)
+- `find NAMEISH` finds matching secrets in all littlesecrets repositories in the current path and its ancestors
 - `info` shows repository information (path, users, secrets)
 
 In the commands:
 
 - `EXPR` is a glob-like pattern, matching `*` and `?`
 - Any failure will return to an error message and a return code of `1`
+- `find` reports each matching secret and its repository path, and returns `1` when no match is found
 
 The tool support the following global options:
 
@@ -44,4 +46,3 @@ Noting that:
   will automatically perform conversions and will fail if the key is not expected (ie. a private
   key is required when a public key is given).
 - The `LITTLESECRETS_OPENSSL_BIN` variable is security-sensitive. It is validated to ensure it points to a real executable file and does not contain command injection attempts. The validation happens once at script startup and the variable is then made readonly.
-
