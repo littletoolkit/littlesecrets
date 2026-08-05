@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 BASE="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 source "$BASE/src/sh/littlesecrets.sh"
 source "$BASE/tests/lib-testing.sh"

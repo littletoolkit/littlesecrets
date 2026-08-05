@@ -142,7 +142,7 @@ function test-start {
 	((TEST_COUNT += 1))
 	TEST_CURRENT=$TEST_COUNT
 	TEST_CURRENT_STEP=""
-	TEST_PATH="$(realpath $(mktemp -d -p "$ORIGINAL_PATH" -t tmp.testing.XXX))"
+	TEST_PATH="$(realpath "$(mktemp -d -p "$ORIGINAL_PATH" -t tmp.testing.XXX)")"
 	TMPDIR="$TEST_PATH"
 	export TMPDIR
 	TEST_NAME="${1:-$TEST_NAME}"
@@ -294,7 +294,8 @@ function test-run {
 }
 
 function test_log_run {
-	local prefix="$(test_prefix)$1"
+	local prefix
+	prefix="$(test_prefix)$1"
 	shift
 	"$@" 2> >(sed "s/^/${RED}${prefix} /" >&2) > >(sed "s/^/${BLUE}${prefix} /")
 	return $?
@@ -305,7 +306,7 @@ function test-ok {
 		test_log_success "$*"
 	fi
 	TEST_LOG+=("${GREEN}✓")
-	TEST_OKS+=($(test_step_id))
+	TEST_OKS+=("$(test_step_id)")
 }
 
 function test-fail {
@@ -510,8 +511,10 @@ function test-data {
 
 function test-diff {
 	if [ "$1" != "$2" ]; then
-		local a=$(mktemp -p "$TEST_PATH" var.XXX)
-		local b=$(mktemp -p "$TEST_PATH" var.XXX)
+		local a
+		a=$(mktemp -p "$TEST_PATH" var.XXX)
+		local b
+		b=$(mktemp -p "$TEST_PATH" var.XXX)
 		echo "$1" >"$a"
 		echo "$2" >"$b"
 		test_log "${ORANGE}>>> Retrieved/Expected"
@@ -597,11 +600,11 @@ function test_log_separator {
 }
 
 function test_log_message {
-	test_log "${BLUE}... ${DIM}$@"
+	test_log "${BLUE}... ${DIM}$*"
 }
 
 function test_log_output {
-	test_log "${GRAY} =  ${DIM}$@"
+	test_log "${GRAY} =  ${DIM}$*"
 }
 
 function test_log_success {
@@ -609,11 +612,12 @@ function test_log_success {
 }
 
 function test_log_error {
-	test_log "${RED}!!! $@"
+	test_log "${RED}!!! $*"
 }
 
 function test_signal_err {
-	test_log "${RED}-!- Unmanaged error [$?] $@"
+	local exit_code=$?
+	test_log "${RED}-!- Unmanaged error [$exit_code] $*"
 }
 
 function test_signal_exit {
@@ -628,16 +632,20 @@ function test-xxx() {
 	test_log_message "TEST PATH $TEST_PATH"
 	local tmp
 	if [[ -n "${prefix}" ]] && [[ -n "${suffix}" ]]; then
-		tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX${suffix}")
+		if ! tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX${suffix}"); then
+			test-abort "Failed to create temporary file"
+			exit 1
+		fi
 	elif [[ -n "${prefix}" ]]; then
-		tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX")
+		if ! tmp=$(mktemp -p "$parent" -t "${prefix}.XXXXXX"); then
+			test-abort "Failed to create temporary file"
+			exit 1
+		fi
 	else
-		tmp=$(mktemp)
-	fi
-
-	if [[ $? -ne 0 ]]; then
-		test-abort "Failed to create temporary file"
-		exit 1
+		if ! tmp=$(mktemp); then
+			test-abort "Failed to create temporary file"
+			exit 1
+		fi
 	fi
 	TEST_CLEAN+=("${tmp}")
 	test_log_message "TEMP ${TEST_CLEAN[*]} ${tmp}"

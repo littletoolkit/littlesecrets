@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 BASE="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 source "$BASE/tests/lib-testing.sh"
 source "$BASE/src/sh/littlesecrets.sh"
@@ -15,7 +16,7 @@ ls_store_init .
 
 # Asserts the transparency of decoding
 test-step "Encoding/Decoding transparency"
-test-expect "$KEY" $(echo -n "$KEY" | ls_encode | ls_decode) "Value decoded"
+test-expect "$KEY" "$(echo -n "$KEY" | ls_encode | ls_decode)" "Value decoded"
 
 # Asserts the transparent of symmetric encoding
 test-step "Symmetric Encryption transparency"

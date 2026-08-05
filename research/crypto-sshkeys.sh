@@ -1,4 +1,8 @@
-source "$(dirname "$(dirname $(realpath "${BASH_SOURCE[0]}"))")"/tests/lib-testing.sh
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck disable=SC1091
+
+source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/tests/lib-testing.sh"
 
 # --
 # Tests the creation of an SSH keypair, and the derivation of a PEM keypair
@@ -14,7 +18,7 @@ PRIVATE_KEY_PATH=$KEYSPATH/keypair.priv           # BEGIN OPENSSH PRIVATE KEY
 PRIVATE_KEY_PEM_PATH="$PRIVATE_KEY_PATH".pem      # BEGIN RSA PRIVATE KEY
 PUBLIC_KEY_PATH=$KEYSPATH/keypair.priv.pub        # ssh-rsa XXXX
 PUBLIC_KEY_PKCS8_PATH="$PUBLIC_KEY_PATH".pem      # BEGIN PUBLIC KEY
-TEST_CLEAN+=($PRIVATE_KEY_PATH $PRIVATE_KEY_PEM_PATH $PUBLIC_KEY_PATH $PUBLIC_KEY_PKCS8_PATH)
+TEST_CLEAN+=("$PRIVATE_KEY_PATH" "$PRIVATE_KEY_PEM_PATH" "$PUBLIC_KEY_PATH" "$PUBLIC_KEY_PKCS8_PATH")
 
 # NOTE: The following creates an RSA PEM keypair directly
 # test-run "openssl genrsa -out ""$PRIVATE_KEY_PATH"" 2048"

@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
 # We're going to use AEC-GCM as  the encryption format
 
 SECRET="Hello, World!"

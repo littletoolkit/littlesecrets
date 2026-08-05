@@ -7,7 +7,7 @@ The tool should have the following CLI:
 - `list EXPR…` returns a list of secrets that match any of `EXPR`
 - `access EXPR…` shows who can access the secrets that match any of `EXPR`
 - `remove SECRET` removes the secret
-- `grant SECRET EXPR…` grants the secrets to all users matching any of `EXPR`
+- `grant SECRET EXPR…` grants the secrets to all users matching any of `EXPR`; a user expression of `*` grants access to every registered user and host
 - `revoke SECRET EXPR…` revoke the secrets from all users matching any of `EXPR`
 - `register USER KEY?` registers the given key for the given user
 - `deregister USER KEY?` de-registers the given key (or all key) for the given user

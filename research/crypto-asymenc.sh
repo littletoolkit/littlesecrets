@@ -1,4 +1,8 @@
-source "$(dirname "$(dirname $(realpath "${BASH_SOURCE[0]}"))")"/tests/lib-testing.sh
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck disable=SC1091
+
+source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/tests/lib-testing.sh"
 
 # --
 # Exercises the encryption and decryption
@@ -22,4 +26,3 @@ test-log "TEXT: $TEXT"
 test-log "DECODED: $DECODED"
 test-expect "$DECODED" "$TEXT"
 # EOF
-

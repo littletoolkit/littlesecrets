@@ -68,7 +68,7 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 : Remove a secret
 
 **grant** *SECRET* *EXPR*...
-: Grant access to users matching the glob expressions
+: Grant access to users matching the glob expressions. Use `*` as the user expression to grant access to every registered user and host.
 
 **revoke** *SECRET* *EXPR*...
 : Revoke access from users matching the glob expressions

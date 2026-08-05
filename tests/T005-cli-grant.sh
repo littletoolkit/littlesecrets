@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 BASE="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 source "$BASE/src/sh/littlesecrets.sh"
 source "$BASE/tests/lib-testing.sh"
@@ -123,6 +124,30 @@ echo -n "Other Secret" | littlesecrets add other.secret
 test-step "Create Charlie user who has no access"
 ssh-keygen -t rsa -b 4096 -f charlie.rsa -P "" -C charlie@machine
 test-expect-success littlesecrets register charlie charlie.rsa.pub
+
+test-step "Grant hello.world to every registered user"
+ALL_GRANT_ERR=$(littlesecrets grant hello.world '*' 2>&1 >/dev/null)
+if echo "$ALL_GRANT_ERR" | grep -q "ERR.*Granted access to secret 'hello.world'"; then
+	test-ok "New grants are reported on ERR output"
+else
+	test-fail "New grants should be reported on ERR output"
+fi
+
+test-step "Verify every registered user can access hello.world"
+if [ "$(littlesecrets -u bob@machine -k bob.rsa get hello.world)" = "$SECRET" ] && \
+	[ "$(littlesecrets -u charlie@machine -k charlie.rsa get hello.world)" = "$SECRET" ]; then
+	test-ok "Every registered user can access hello.world"
+else
+	test-fail "Not every registered user can access hello.world"
+fi
+
+test-step "Repeat grant without reporting existing access"
+REPEAT_GRANT_ERR=$(littlesecrets grant hello.world '*' 2>&1 >/dev/null)
+if echo "$REPEAT_GRANT_ERR" | grep -q "Granted access"; then
+	test-fail "Existing grants should not be reported as new"
+else
+	test-ok "Existing grants are not reported as new"
+fi
 
 test-step "Grant all secrets to Charlie using * wildcard"
 test-expect-success littlesecrets grant '*' charlie

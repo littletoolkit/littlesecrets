@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 BASE="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 source "$BASE/src/sh/littlesecrets.sh"
 source "$BASE/tests/lib-testing.sh"
@@ -13,7 +14,7 @@ touch "$TEST_PATH/.littlesecrets/secret/outer.secret/user@host.key"
 touch "$TEST_PATH/repo/.littlesecrets/secret/inner.secret/secret.enc"
 touch "$TEST_PATH/repo/.littlesecrets/secret/inner.secret/user@host.key"
 mkdir -p "$TEST_PATH/repo/child"
-cd "$TEST_PATH/repo/child"
+cd "$TEST_PATH/repo/child" || exit 1
 
 test-step "Find matching secrets in all repositories"
 FIND_OUTPUT="$(ls_cli find '*secret')"

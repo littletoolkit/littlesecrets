@@ -1,4 +1,6 @@
-##!/usr/bin/env bash
+#!/usr/bin/env bash
+# shellcheck disable=SC1091
+set -euo pipefail
 source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"/tests/lib-testing.sh
 source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"/src/sh/littlesecrets.sh
 
@@ -6,7 +8,7 @@ source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"/src/sh/little
 # Tests the registration of users
 
 # Initialize testing
-test-init
+test-init "$@"
 
 # Test registering with default parameters (current user, current host)
 test-step "Register with defaults"
