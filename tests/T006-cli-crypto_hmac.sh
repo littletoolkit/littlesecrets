@@ -17,6 +17,9 @@ HMAC=$(echo -n "$SECRET_ENC" | ls_hmac "$SECRET_KEY_HEX")
 test-noempty "$HMAC" "HMAC command returns non-empty value"
 test_log_output "HMAC=$HMAC"
 
+LEGACY_HMAC=$(printf '%s' "$SECRET_ENC" | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -hmac "$SECRET_KEY_HEX" | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]')
+test-expect "$HMAC" "$LEGACY_HMAC" "HMAC matches the previous OpenSSL implementation"
+
 test-step "HMAC Encoding Stability"
 HMAC_2=$(echo -n "$SECRET_ENC" | ls_hmac "$SECRET_KEY_HEX")
 test_log_output "HMAC=$HMAC_2"

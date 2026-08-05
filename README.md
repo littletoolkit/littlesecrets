@@ -19,10 +19,14 @@ on RSA keypairs and AES-256-CBC with PBKDF2 for encryption.
 
 ## Quick Start
 
-Global options (excerpt): `-k|--key`, `-u|--user`, `--host`, `-s|--store`, `-fjson|--format=json|-f json`, `--binary`, `--text`.
+Global options (excerpt): `-k|--key`, `-u|--user`, `--host`, `-s|--store`, `-fjson|--format=json|-f json`, `--binary`, `--text`, `-q|--quiet`, `--verbose`, `--debug`.
 
 - `--binary` forces base64 encoding of secret values in JSON output (adds `encoding` field)
 - `--text` forces plain text emission of secret values in JSON output (suppresses `encoding` field)
+- `--quiet` reports errors only; `--verbose` shows routine details and progress; `--debug` also shows external command output and stack traces
+
+Command data is written to stdout, while diagnostics and progress output are
+written to stderr. Routine action logs are hidden by default.
 
 
 You can install like so, you'll need Bash, OpenSSL, Coreutils and a POSIX
@@ -142,4 +146,3 @@ Related tools, compared to LittleSecrets:
 - [age](https://github.com/FiloSottile/age): age is a lower-level encryption tool, which we could use in lieu of the RSA/AES combo, however, this would require encrypting the secret for each user, therefore taking more space and requiring proof of the secret's original value, while also limiting the ability to decrypt to platform that have age implemented.
 
 - [dotenvx](https://dotenvx.com/docs/quickstart/encryption): allows to encrypt your `.env` file, which is convenience but lacks the granularity of `littlesecrets`, where you encrypt (and grant) each secret independently.
-

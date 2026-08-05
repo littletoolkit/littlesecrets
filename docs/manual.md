@@ -1,4 +1,4 @@
-% LITTLESECRETS(1) Version 1.0.0 | LittleSecrets Documentation
+% LITTLESECRETS(1) Version 1.0.1 | LittleSecrets Documentation
 
 # NAME
 
@@ -38,8 +38,17 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **-v**, **--version**
 : Show version information
 
+**-q**, **--quiet**
+: Suppress warnings and routine diagnostics. Errors are still reported.
+
+**--verbose**
+: Show routine operation details and progress on stderr.
+
+**--debug**
+: Show diagnostic details and error stack traces on stderr.
+
 **-k**, **--key** *KEY*
-: Set private key path (default: $HOME/.ssh/id_rsa)
+: Set the private key used for decryption (default: $HOME/.ssh/id_rsa)
 
 **-u**, **--user** *USER*
 : Set user name (default: $USER)
@@ -50,61 +59,86 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 **-s**, **--store** *PATH*
 : Set store path (default: .littlesecrets)
 
+**-f**, **--format** *FORMAT*
+: Set output format to `text` or `json`. Global options must appear before the command.
+
+**--binary**, **--text**
+: In JSON mode, force binary values to base64 or force values to text. These options cannot be combined.
+
+Commands write data only to stdout. Diagnostics, warnings, and progress output
+are written to stderr. Routine operation details are hidden by default and can
+be enabled with **--verbose** or **--debug**. ANSI colors are enabled only when
+both output streams are terminals; set **NOCOLOR** to disable them explicitly.
+The default level reports warnings, **--quiet** reports errors only, and
+**--debug** additionally shows external command output and error stack traces.
+
+# ARGUMENT CONVENTIONS
+
+`<NAME>` is required, `[NAME]` is optional, `<NAME>...` means one or more,
+and `[NAME...]` means zero or more. Names ending in `_EXPR` are shell glob
+expressions and should be quoted. Commands use the nearest `.littlesecrets`
+store unless otherwise stated. Use `find` to search all ancestor stores.
+
 # COMMANDS
 
-**init** [*path*]
-: Initialize a new secrets store at the specified path (default: current directory)
+**init** [*DIRECTORY*]
+: Create `DIRECTORY/.littlesecrets` (default: current directory)
 
-**list**, **ls** [*EXPR*...]
-: List secrets matching the given glob expressions
+**list**, **ls** [*SECRET_EXPR*...]
+: List matching secret names and recipients. With no expression, list all secrets.
 
 **get** *SECRET*
 : Retrieve the value of a secret
 
-**add**, **set** *SECRET* [*CONTENT*]
-: Set a secret's value. If content is not provided, reads from stdin
+**add**, **set** *SECRET* [*VALUE*]
+: Set a value. If `VALUE` is omitted, read it from stdin.
 
 **remove** *SECRET*
 : Remove a secret
 
-**grant** *SECRET* *EXPR*...
-: Grant access to users matching the glob expressions. Use `*` as the user expression to grant access to every registered user and host.
+**grant** *SECRET_EXPR* *USER_EXPR*...
+: Grant matching users access to matching secrets. Quote expressions such as `*`.
 
-**revoke** *SECRET* *EXPR*...
-: Revoke access from users matching the glob expressions
+**revoke** *SECRET_EXPR* *USER_EXPR*...
+: Revoke matching users' access to matching secrets.
 
-**register** [*USER[@HOST]*] [*KEY*]
-: Register a user's public key for a specific host. If HOST is not specified, uses LITTLESECRETS_HOST.
+**register** [*USER[@HOST]*] [*PUBLIC_KEY*]
+: Register a public key. If the user is omitted, use the configured user and host.
 
-**deregister** *USER[@HOST]* [*KEY*]
-: De-register a user's public key from a specific host
+**deregister** *USER[@HOST]* [*PUBLIC_KEY*]
+: De-register a user's public-key registration. With *USER@HOST*, removes the
+matching host registration; with *USER*, removes matching registrations from all
+of that user's hosts.
 
-**users** [*EXPR*...]
-: List users matching the glob expressions
+**users** [*USER_EXPR*...]
+: List registered users and hosts matching the expressions.
 
-**access** [*EXPR*...]
-: List users with access to secrets. If EXPR is provided, only show secrets matching the expressions. Format is "secret:user1@host1 user2@host2 ..."
+**access** [*SECRET_EXPR*...]
+: List recipients by secret in `SECRET: user@host ...` format.
 
-**hash** *NAMES*...
-: Ensures the secrets have a matching HMAC hash
+**hash** [*SECRET_EXPR*...]
+: Create or update HMACs for matching secrets. With no expression, process all secrets.
 
-**verify** *NAMES*...
-: Verifies the decrypted secret against the stored HMAC hash
+**verify** [*SECRET_EXPR*...]
+: Verify HMACs without modifying secrets. Missing or invalid HMACs fail.
 
-**export** [*VAR=secret*...]
-: Exports the given secrets as shell environment variables
+**export** [*VAR=SECRET...]
+: Output shell assignments. With no arguments, export all secrets.
 
 **ensure** *SECRET*
 : Ensure a secret exists (create if missing). If the secret exists, returns its value. If not, creates a new random secret and returns it.
 
-**has** *EXPR*...
-: Check if secrets matching glob expressions exist. Returns exit code 0 if any secrets match, 1 otherwise. Designed for scripting and conditional logic. Supports multiple patterns combined with OR logic.
+**has** *SECRET_EXPR*...
+: Write nothing; return 0 if any secret matches, otherwise return 1.
 
-**find** *NAMEISH*
-: Find matching secrets in all `.littlesecrets` repositories in the current directory and its ancestors.
+**find** *SECRET_EXPR*
+: Find matching secrets in every ancestor store and print `SECRET: STORE_PATH`.
 
 **info**
-: Show repository information including path, users, secrets, and other ancestor repositories
+: Show the active store, its users and secrets, and other ancestor stores.
+
+**help** [*COMMAND*]
+: Show general help or help for one command. `COMMAND --help` is equivalent.
 
 # ENVIRONMENT
 
@@ -125,6 +159,9 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 
 **LITTLESECRETS_OPENSSL_BIN**
 : Path to the OpenSSL binary (default: openssl). This variable is validated at startup and made readonly to prevent tampering. The path must point to an executable file and cannot contain shell metacharacters. For security, use absolute paths when possible.
+
+**LITTLESECRETS_LOG_FILTER**
+: Optional space-separated log categories used by library callers. The default is `warning`; the CLI flags **--quiet**, **--verbose**, and **--debug** provide the supported user-facing levels.
 
 # FILES
 

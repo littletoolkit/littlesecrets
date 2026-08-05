@@ -18,11 +18,14 @@ Note that:
 
 In practice:
 
-- Secrets are symmetrically encrypted using AES-256-CBC and a random key, which length is based on the default RSA key length.
+- Secrets are symmetrically encrypted using AES-256-CBC and a random key. Its
+  maximum length is derived from `LITTLESECRETS_KEYSIZE`, which defaults to
+  2048 for RSA-OAEP payload sizing.
 - Secret encryption key is asymmetrically encrypted using an RSA keypair
 - An RSA private key either in SSH or PEM (openssl) format
 - An RSA public key in PEM (openssl) format, optional as it can be derived from the private key
 - An secret encryption key no longer than what the RSA keypair can encrypt
+- Generated SSH and OpenSSL RSA keys are 4096-bit.
 
 Some considerations of this system:
 
@@ -84,7 +87,8 @@ The HMAC integrity validation works using the decrypted *secret* and the
 SECRET_HMAC_KEY="$(echo -n "$SECRET_ENC_KEY" | openssl base64 -A)"
 
 # Computes the HMAC of the secret (decrypted) using the HMAC key.
-SECRET_HMAC=$(echo -n "$SECRET" | openssl dgst -sha256 -hmac "$1" | cut -d' ' -f2)"
+# LittleSecrets uses the standard HMAC inner/outer-pad construction with
+# `openssl dgst -sha256`, so the key is never passed in command arguments.
 ```
 
 Note that in the shell based implementation we:

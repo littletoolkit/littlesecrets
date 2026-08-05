@@ -22,7 +22,14 @@ ls_store_init || test-fail "Could not init store"
 test-step "Register additional test users"
 PRIVKEY1=$(test-expect-success ls_privkey_new)
 PUBKEY1=$(test-expect-success ls_pubkey_import "$PRIVKEY1")
-ls_cli register user1@host1 "$PUBKEY1" || test-fail "Could not register user1@host1"
+REGISTER_LOG=$(ls_cli register user1@host1 "$PUBKEY1" 2>&1 >/dev/null) || test-fail "Could not register user1@host1"
+if echo "$REGISTER_LOG" | grep -q 'ACT'; then
+	test-fail "Routine actions should be quiet by default"
+fi
+VERBOSE_REGISTER_LOG=$(ls_cli --verbose register user1@host1 "$PUBKEY1" 2>&1 >/dev/null) || test-fail "Could not re-register user1@host1"
+if ! echo "$VERBOSE_REGISTER_LOG" | grep -q 'ACT'; then
+	test-fail "Verbose mode should report routine actions"
+fi
 
 PRIVKEY2=$(test-expect-success ls_privkey_new)
 PUBKEY2=$(test-expect-success ls_pubkey_import "$PRIVKEY2")
@@ -36,8 +43,24 @@ ls_cli add binary-secret $'binary\x00data' || test-fail "Could not add binary se
 
 # Grant access to additional users
 ls_cli grant secret1 "user1@host1" || test-fail "Could not grant access to user1@host1"
-ls_cli grant secret2 "user1@host1 user2@host2" || test-fail "Could not grant access to multiple users"
+ls_cli grant secret2 user1@host1 user2@host2 || test-fail "Could not grant access to multiple users"
 ls_cli grant binary-secret "user2@host2" || test-fail "Could not grant access to user2@host2 for binary-secret"
+
+test-step "Test logging levels for verification"
+export LS_LOG_FILTER="warning"
+DEFAULT_VERIFY_LOG=$(ls_cli verify secret1 2>&1 >/dev/null) || test-fail "Default verify should succeed"
+if echo "$DEFAULT_VERIFY_LOG" | grep -q 'PRG'; then
+	test-fail "Default verification progress should be hidden"
+fi
+QUIET_VERIFY_LOG=$(ls_cli --quiet verify secret1 2>&1 >/dev/null) || test-fail "Quiet verify should succeed"
+if echo "$QUIET_VERIFY_LOG" | grep -Eq 'PRG|WRN'; then
+	test-fail "Quiet verification should suppress progress and warnings"
+fi
+VERBOSE_VERIFY_LOG=$(ls_cli --verbose verify secret1 2>&1 >/dev/null) || test-fail "Verbose verify should succeed"
+if ! echo "$VERBOSE_VERIFY_LOG" | grep -q 'PRG'; then
+	test-fail "Verbose verification should report progress"
+fi
+export LS_LOG_FILTER="warning"
 
 test-step "Test JSON format for list command"
 JSON_LIST=$(ls_cli -f json list)

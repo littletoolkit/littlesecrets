@@ -17,8 +17,8 @@ PRIVKEY=$(ls_privkey_new)
 PUBKEY=$(ls_pubkey_import "$PRIVKEY")
 
 test-step "Derivation of public key from private key"
-test-expect "$(echo "$PRIVKEY" | ls_key_id)" "private:pkcs8:valid=rsa" "Private key is valid"
-test-expect "$(ls_user_pubkey "" "$PRIVKEY" | ls_key_id)" "public:spki:" "Public key is derived"
+test-expect "$(echo "$PRIVKEY" | ls_key_format)" "private:pkcs8:valid=rsa" "Private key is valid"
+test-expect "$(ls_user_pubkey "" "$PRIVKEY" | ls_key_format)" "public:spki:" "Public key is derived"
 
 ENCKEY="HELLO_WORLD_ENC"
 

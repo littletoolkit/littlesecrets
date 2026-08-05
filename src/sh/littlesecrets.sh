@@ -33,6 +33,9 @@ LITTLESECRETS_KEY=${LITTLESECRETS_KEY:-$HOME/.ssh/id_rsa}
 LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
 LITTLESECRETS_KEYSIZE=${LITTLESECRETS_KEYSIZE:-2048} # NOTE: It would be best to do 4096, and we should test keys
+LITTLESECRETS_FORMAT=${LITTLESECRETS_FORMAT:-}
+LITTLESECRETS_FORCE_ENCODING=${LITTLESECRETS_FORCE_ENCODING:-}
+LITTLESECRETS_SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 # --
 # Validate and secure the OpenSSL binary path
 function ls_validate_openssl_bin {
@@ -100,7 +103,7 @@ LITTLESECRETS_OPTIONS=${LITTLESECRETS_OPTIONS:-hmac}
 
 # --
 # Color library
-if [ -z "${NOCOLOR:-}" ] && [ -n "${TERM:-}" ] && tput setaf 1 &>/dev/null; then
+if [ -z "${NOCOLOR:-}" ] && [ -t 1 ] && [ -t 2 ] && [ -n "${TERM:-}" ] && tput setaf 1 &>/dev/null; then
 	CYAN="$(tput setaf 33)"
 	BLUE_DK="$(tput setaf 27)"
 	BLUE="$(tput setaf 33)"
@@ -163,15 +166,23 @@ export RESET
 # -----------------------------------------------------------------------------
 
 LS_LOG_PREFIX="${DIM}[ls]${RESET}"
-LS_LOG_FILTER="warning tip action"
+LS_LOG_FILTER="${LITTLESECRETS_LOG_FILTER:-warning}"
 
 function ls_log {
 	echo "${LS_LOG_PREFIX}$*${RESET}" >&2
 }
 
+function ls_log_external {
+	if [[ "$LS_LOG_FILTER" = *"debug"* ]]; then
+		cat >&2
+	else
+		cat >/dev/null
+	fi
+}
+
 function ls_log_action {
 	if [[ "$LS_LOG_FILTER" = *"action"* ]]; then
-		ls_log "${DIM}${BOLD} → ACT $*" >&2
+		ls_log "${DIM}${BOLD} → ACT $*"
 	fi
 	return 0
 }
@@ -179,6 +190,13 @@ function ls_log_action {
 function ls_log_message {
 	if [[ "$LS_LOG_FILTER" = *"message"* ]]; then
 		ls_log "${DIM} … NFO $*"
+	fi
+	return 0
+}
+
+function ls_log_progress {
+	if [[ "$LS_LOG_FILTER" = *"progress"* ]]; then
+		ls_log "${DIM} … PRG $*"
 	fi
 	return 0
 }
@@ -216,6 +234,9 @@ function ls_log_output_end {
 }
 
 function ls_log_stack {
+	if [[ "$LS_LOG_FILTER" != *"debug"* ]]; then
+		return 0
+	fi
 	local line=""
 	local frame=""
 	local func=""
@@ -316,8 +337,9 @@ function ls_find_all {
 }
 
 function ls_mkparent {
+	local path
+	local parent
 	for path in "$@"; do
-		local parent
 		parent="$(dirname "$path")"
 		if [ -z "$parent" ]; then
 			parent=
@@ -328,6 +350,7 @@ function ls_mkparent {
 }
 
 function ls_unlink {
+	local path
 	for path in "$@"; do
 		if [ -z "$path" ]; then
 			path=
@@ -340,6 +363,7 @@ function ls_unlink {
 # --
 # Ensures that temporary files are cleaned up
 function ls_cleanup {
+	local path
 	for path in "${LS_CLEANUP[@]}"; do
 		if [ -z "$path" ]; then
 			# nothing
@@ -353,7 +377,7 @@ function ls_cleanup {
 	fi
 }
 
-function ls_ispath { ## PATHLIKE
+function ls_is_path { ## PATHLIKE
 	if [[ "${1:-}" =~ / ]] || [[ "${1:-}" != @LS:* ]]; then
 		return 0
 	else
@@ -365,6 +389,7 @@ function ls_ispath { ## PATHLIKE
 # Echoes `TEXT` if any `EXPR` (glob) matches `TEXT`
 function ls_match { # TEXT EXPR…
 	local text="$1"
+	local pattern
 	shift # Remove first argument, leaving only the patterns
 	if [ "$#" == 0 ]; then
 		echo "$text"
@@ -408,49 +433,6 @@ function ls_option { # OPTION
 	if [[ $LITTLESECRETS_OPTIONS == *"$1"* ]]; then
 		echo "$1"
 	fi
-}
-
-# -----------------------------------------------------------------------------
-#
-# VALUE ENCRYPTION
-#
-# -----------------------------------------------------------------------------
-# This is to make sure we
-
-# Generate a random 256-bit encryption key when the script starts
-LS_VALUE_ENCRYPTION_KEY=$("$LITTLESECRETS_OPENSSL_BIN" rand -hex 32)
-LS_VALUE_ENCRYPTION_IV="00000000000000000000000000000000"
-
-# Function: ls_value_encrypt [STDIN] [STDOUT]
-# Function to encrypt stdin to stdout using the key
-function ls_value_encrypt() {
-	if [[ -z "$LS_VALUE_ENCKEY" ]]; then
-		ls_log_error "LS_VALUE_ENCKEY not set"
-		return 1
-	fi
-	# Use AES-256-CBC for encryption
-	# -e: encrypt
-	# -aes-256-cbc: cipher algorithm
-	# -K: hex key
-	# -iv: initialization vector (using fixed IV for simplicity, but you could generate random)
-	# -nosalt: don't use salt (for consistency)
-	"$LITTLESECRETS_OPENSSL_BIN" enc -e -aes-256-cbc \
-		-K "$LS_VALUE_ENCRYPTION_KEY" \
-		-iv "$LS_VALUE_ENCRYPTION_IV" \
-		-nosalt 2>/dev/null || return 1
-}
-
-# Function: ls_value_decrypt [STDIN] [STDOUT]
-# Function to decrypt stdin to stdout using the key
-function ls_value_decrypt() {
-	if [[ -z "$LS_VALUE_ENCKEY" ]]; then
-		ls_log_error "LS_VALUE_ENCKEY not set"
-		return 1
-	fi
-	"$LITTLESECRETS_OPENSSL_BIN" enc -d -aes-256-cbc \
-		-K "$LS_VALUE_ENCRYPTION_KEY" \
-		-iv "$LS_VALUE_ENCRYPTION_IV" \
-		-nosalt 2>/dev/null || return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -563,13 +545,11 @@ function ls_file_base64() {
 	"$LITTLESECRETS_OPENSSL_BIN" base64 -A <"$path"
 }
 
-# Function: ls_json_emit_key_array KEY [ITEM...]
-# Emits a JSON key mapped to an array of string values (no trailing comma).
-# Output format: two-space indent, then "key": ["a", "b"].
-function ls_json_emit_key_array() { # KEY ITEMS...
-	local key="$1"
-	shift || true
-	printf '  %s: [' "$(ls_json_string "$key")"
+# Emits a JSON array of non-empty string values.
+function ls_json_emit_string_array { # INDENT ITEMS...
+	local indent="$1"
+	shift
+	printf '%s[' "$indent"
 	local first=true
 	for item in "$@"; do
 		if [ -n "$item" ]; then
@@ -584,6 +564,15 @@ function ls_json_emit_key_array() { # KEY ITEMS...
 	printf ']'
 }
 
+# Function: ls_json_emit_key_array KEY [ITEM...]
+# Emits a JSON key mapped to an array of string values (no trailing comma).
+function ls_json_emit_key_array() { # KEY ITEMS...
+	local key="$1"
+	shift || true
+	printf '  %s: ' "$(ls_json_string "$key")"
+	ls_json_emit_string_array '' "$@"
+}
+
 # -----------------------------------------------------------------------------
 #
 # KEYS
@@ -594,55 +583,86 @@ function ls_json_emit_key_array() { # KEY ITEMS...
 # Ensures that the `LITTLESECRETS_KEY` exists and is in the right format.
 function ls_ssh_keypair_ensure { # KEYPATH
 	local privkey_path="${1:-$LITTLESECRETS_KEY}"
+	if [[ "$privkey_path" == *$'\n'* ]]; then
+		ls_log_error "SSH private key path is invalid"
+		return 1
+	fi
+	privkey_path="$(realpath -m -- "$privkey_path")"
+	ls_mkparent "$privkey_path"
+	local lock_path
+	lock_path="${privkey_path}.littlesecrets.lock"
+	local lock_fd
+	# The source key and its derived files are shared by concurrent CLI processes.
+	# Hold one per-source-key lock across their complete initialization.
+	if ! exec {lock_fd}>"$lock_path"; then
+		ls_log_error "Could not create SSH key lock: $lock_path"
+		return 1
+	fi
+	if ! flock -x "$lock_fd"; then
+		ls_log_error "Could not acquire SSH key lock: $lock_path"
+		exec {lock_fd}>&-
+		return 1
+	fi
 	# Ensures private key exists, otherwise creates it
 	if [ ! -e "$privkey_path" ]; then
 		ls_log_message "Missing SSH RSA key: $privkey_path"
 		ls_log_action "Creating SSH key using 'ssh-keygen -t rsa -b 4096'"
 		ls_log_output_start
-		ssh-keygen -q -t rsa -b 4096 -N "" -f "$privkey_path" >&2
+		ssh-keygen -q -t rsa -b 4096 -N "" -f "$privkey_path" 2> >(ls_log_external)
 		ls_log_output_end
 	fi
 	if ! ssh-keygen -y -P "" -f "$privkey_path" >/dev/null 2>&1; then
 		ls_log_error "SSH private key with passphrase are not supported: $privkey_path"
+		flock -u "$lock_fd"
+		exec {lock_fd}>&-
 		return 1
 	fi
 	local key_id
 	key_id=$("$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 "$privkey_path" | cut -d' ' -f2 | cut -c1-16)
 	local privkey_parent
-	privkey_parent=$(dirname "$(realpath "$privkey_path")")
+	privkey_parent=$(dirname -- "$(realpath -- "$privkey_path")")
 	local privkey_pem_path="${privkey_parent}/littlesecrets-${key_id}.pem"
 	local pubkey_pem_path="${privkey_parent}/littlesecrets-${key_id}.pem.pub"
 	# Ensures PEM private key exists, and is up to date
 	if [ ! -e "$privkey_pem_path" ] || [ "$privkey_path" -nt "$privkey_pem_path" ]; then
-		if [ -e "$privkey_pem_path" ]; then
-			chmod +w "$privkey_pem_path"
-		fi
+		local privkey_ssh_tmp
+		privkey_ssh_tmp="$(mktemp "${privkey_pem_path}.ssh.XXXXXX")"
+		LS_CLEANUP+=("$privkey_ssh_tmp")
+		local privkey_pem_tmp
+		privkey_pem_tmp="$(mktemp "${privkey_pem_path}.tmp.XXXXXX")"
+		LS_CLEANUP+=("$privkey_pem_tmp")
 		ls_log_action "Converting SSH RSA DER key to PEM format: $privkey_pem_path"
 		# NOTE: ssh-keygen will overwrite the key, so we copy it
-		cp -a "$privkey_path" "$privkey_pem_path.ssh"
+		cp -a "$privkey_path" "$privkey_ssh_tmp"
 		# SSH key is in DER format, we need PEM
 		ls_log_output_start
-		ssh-keygen -q -p -m pem -N '' -f "${privkey_pem_path}.ssh" >&2
-		"$LITTLESECRETS_OPENSSL_BIN" rsa -in "${privkey_pem_path}.ssh" -out "${privkey_pem_path}" >&2
+		ssh-keygen -q -p -m pem -N '' -f "$privkey_ssh_tmp" 2> >(ls_log_external)
+		"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$privkey_ssh_tmp" -out "$privkey_pem_tmp" 2> >(ls_log_external)
 		ls_log_output_end
-		unlink "${privkey_pem_path}.ssh"
-		chmod 400 "$privkey_pem_path"
+		chmod 400 "$privkey_pem_tmp"
+		mv -f "$privkey_pem_tmp" "$privkey_pem_path"
+		ls_unlink "$privkey_ssh_tmp"
 	fi
 	# Ensures PEM public key exists, and is up to date
 	if [ ! -e "$pubkey_pem_path" ] || [ "$privkey_pem_path" -nt "$pubkey_pem_path" ]; then
-		if [ -e "$pubkey_pem_path" ]; then
-			chmod +w "$pubkey_pem_path"
-		fi
+		local pubkey_pem_tmp
+		pubkey_pem_tmp="$(mktemp "${pubkey_pem_path}.tmp.XXXXXX")"
+		LS_CLEANUP+=("$pubkey_pem_tmp")
 		ls_log_action "Deriving PKCS8 public key from RSA PEM private key: $pubkey_pem_path"
 		ls_log_output_start
-		"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$privkey_pem_path" -pubout -out "$pubkey_pem_path" >&2
+		"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$privkey_pem_path" -pubout -out "$pubkey_pem_tmp" 2> >(ls_log_external)
 		ls_log_output_end
-		chmod 400 "$pubkey_pem_path"
+		chmod 400 "$pubkey_pem_tmp"
+		mv -f "$pubkey_pem_tmp" "$pubkey_pem_path"
 	fi
 	if [ ! -e "$privkey_pem_path" ] || [ ! -e "$pubkey_pem_path" ]; then
 		ls_log_error "Could not create PEM keypair from SSH keypair: $privkey_path"
+		flock -u "$lock_fd"
+		exec {lock_fd}>&-
 		return 1
 	fi
+	flock -u "$lock_fd"
+	exec {lock_fd}>&-
 	echo "${privkey_pem_path}"
 }
 
@@ -680,20 +700,20 @@ function ls_privkey_new { #KEYPATH
 # 	local keyfmt=
 # 	local keypath_tmp=
 # 	local keyout_tmp=
-# 	if ls_ispath "$1" && [ -e "$1" ]; then
-# 		keyfmt="$(ls_key_id "$keypath")"
+# 	if ls_is_path "$1" && [ -e "$1" ]; then
+# 		keyfmt="$(ls_key_format "$keypath")"
 # 	else
 # 		keypath_tmp="$(ls_mkstemp)"
 # 		echo -n "$keypath" | ls_decode >"$keypath_tmp"
 # 		keypath="$keypath_tmp"
-# 		keyfmt="$(ls_key_id "$keypath")"
+# 		keyfmt="$(ls_key_format "$keypath")"
 # 	fi
 # 	local res=0
 # 	case "$keyfmt" in
 # 	# We obviously only support private keys here
 # 	private:ssh*)
 # 		keyout_tmp=$(ls_mkstemp)
-# 		if ls_ispath "$keypath"; then
+# 		if ls_is_path "$keypath"; then
 # 			cp -a "$keypath" "$keyout_tmp"
 # 		else
 # 			echo "$keypath" >"$keyout_tmp"
@@ -722,13 +742,13 @@ function ls_pubkey_import { #KEYPATH
 	local keyfmt=
 	local keypath_tmp=
 	local keyout_tmp=
-	if ls_ispath "$1" && [ -e "$1" ]; then
-		keyfmt="$(ls_key_id "$keypath")"
+	if ls_is_path "$1" && [ -e "$1" ]; then
+		keyfmt="$(ls_key_format "$keypath")"
 	else
 		keypath_tmp="$(ls_mkstemp)"
 		echo -n "$keypath" | ls_decode >"$keypath_tmp"
 		keypath="$keypath_tmp"
-		keyfmt="$(ls_key_id "$keypath")"
+		keyfmt="$(ls_key_format "$keypath")"
 	fi
 	local res=0
 	case "$keyfmt" in
@@ -736,21 +756,21 @@ function ls_pubkey_import { #KEYPATH
 		keyout_tmp=$(ls_mkstemp)
 		cp -a "$keypath" "${keyout_tmp}"
 		ls_log_output_start
-		if ! ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" >&2; then
+		if ! ssh-keygen -q -p -m pem -N '' -f "$keyout_tmp" 2> >(ls_log_external); then
 			res=$?
 		else
-			"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$keyout_tmp" -pubout
+			"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$keyout_tmp" -pubout 2> >(ls_log_external)
 			res=$?
 		fi
 		ls_log_output_end
 		unlink "$keyout_tmp"
 		;;
 	private:pkcs8*)
-		"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$keypath" -pubout
+		"$LITTLESECRETS_OPENSSL_BIN" rsa -in "$keypath" -pubout 2> >(ls_log_external)
 		res=$?
 		;;
 	public:ssh+rsa*)
-		ssh-keygen -f "$keypath" -e -m PKCS8
+		ssh-keygen -f "$keypath" -e -m PKCS8 2> >(ls_log_external)
 		res=$?
 		;;
 	public:spki*)
@@ -803,13 +823,12 @@ function ls_key_id_match { #TYPE FORMATS
 	return 1
 }
 
-# TODO: Shoudl be ls_key_fmt
 # --
 # Outputs the type/format of the key, in `:` separated form
 # 1) Key type, `public` or `private` or `unknown`
 # 2) Key format, `+` separated, like `pkcs8+rsa`
 # 3) `valid` if the format was validated, otherwise nothing
-function ls_key_id { ## KEY_OR_PATH?
+function ls_key_format { ## KEY_OR_PATH?
 	# Function to analyze a single file
 	local file="${1:-}"
 	local tmp_file=""
@@ -877,7 +896,7 @@ function ls_key_id { ## KEY_OR_PATH?
 #
 # -----------------------------------------------------------------------------
 
-function ls_encoded {
+function ls_is_encoded {
 	case "$1" in
 	@LS:*)
 		return 0
@@ -928,7 +947,7 @@ function ls_encrypt_sym { # KEY
 	ls_log_output_start
 	# NOTE: The fd anonymises the key path.
 	exec 3<"$key_path"
-	if ! "$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out "$output_path" -pass fd:3; then
+	if ! "$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out "$output_path" -pass fd:3 2> >(ls_log_external); then
 		openssl_res=1
 		ls_log_error "ls_encrypt_sym: Could not encrypt secret"
 	else
@@ -941,11 +960,7 @@ function ls_encrypt_sym { # KEY
 }
 
 # Function: ls_hmac KEY PATH?
-# Calculates the hmac value of the given secret, typically used with the
-# secret key.
-# - Should be in hex (xxd) format, as given by `ls_hmac_key`
-# - Key will be leaked to /proc, so should not be a secret
-# - Use `ls_hmac_key` to pre-process your key
+# Calculates an HMAC-SHA256 without passing key material in process arguments.
 function ls_hmac {
 	local key="${1:-}"
 	local path="${2:-/dev/stdin}"
@@ -953,12 +968,31 @@ function ls_hmac {
 	if [ -z "$key" ]; then
 		ls_log_error "ls_hmac: Given key is empty"
 		return 1
-	# NOTE: Super important here, we keep the KEY in XXD format, as otherwise
-	# it may contain NULL bytes and screw the whole process. It's OK to pass
-	# the key in this format, the derivation is stable and the entropy 
-	# preserved. Not that any change in the key format though will lead 
-	# to a different HMAC signature.
-	elif ! "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -hmac "${key}" < "$path" | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]'; then
+	fi
+	local key_hex
+	key_hex="$(printf '%s' "$key" | xxd -p -c 128)"
+	if [ "${#key_hex}" -gt 128 ]; then
+		key_hex="$(printf '%s' "$key" | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | xxd -p -c 64)"
+	fi
+	while [ "${#key_hex}" -lt 128 ]; do key_hex+="00"; done
+	local inner_hex=""
+	local outer_hex=""
+	local offset
+	local byte
+	for ((offset = 0; offset < 128; offset += 2)); do
+		byte=$((16#${key_hex:offset:2}))
+		printf -v byte '%02x' "$((byte ^ 0x36))"
+		inner_hex+="$byte"
+		byte=$((16#${key_hex:offset:2}))
+		printf -v byte '%02x' "$((byte ^ 0x5c))"
+		outer_hex+="$byte"
+	done
+	local inner_digest
+	if ! inner_digest=$({ printf '%s' "$inner_hex" | xxd -r -p; cat "$path"; } | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | xxd -p -c 64); then
+		ls_log_error "ls_hmac: Could not generate secret HMAC"
+		return 1
+	fi
+	if ! { printf '%s' "$outer_hex$inner_digest" | xxd -r -p; } | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]'; then
 		ls_log_error "ls_hmac: Could not generate secret HMAC"
 		return 1
 	fi
@@ -978,7 +1012,7 @@ function ls_decrypt_sym { # KEY
 	# Read input first
 	cat >"$input_path"
 	exec 3<"$key_path"
-	if ! "$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3; then
+	if ! "$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3 2> >(ls_log_external); then
 		res=1
 		ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$res]"
 	else
@@ -1011,7 +1045,7 @@ function ls_encrypt_asym { # PUBKEY? PATH?
 	ls_log_output_start
 	local output_path
 	output_path=$(ls_mkstemp)
-	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out "$output_path"; then
+	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out "$output_path" 2> >(ls_log_external); then
 		res=1
 		ls_log_error "ls_encrypt_asym: Could not asymmetrically encrypt secret"
 	else
@@ -1046,7 +1080,7 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	ls_log_output_start
 	local output_path
 	output_path=$(ls_mkstemp)
-	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path"; then
+	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path" 2> >(ls_log_external); then
 		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$?]"
 		res=1
 	else
@@ -1110,7 +1144,7 @@ function ls_user_list { # EXPR…
 	ls_match_item "user/*/*.pubkey" "$@" | rev | cut -d/ -f1,2 | rev | sed 's|.pubkey||g;s|/|:|g' | sort
 }
 
-function ls_user_registered { # USER? KEY?
+function ls_user_registration_path { # USER? KEY?
 	local store
 	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
@@ -1184,12 +1218,39 @@ function ls_user_list_keys { # USER? HOST?
 	fi
 }
 
+# Lists registered public-key paths matching USER or USER@HOST glob expressions.
+function ls_user_key_paths { # USER_EXPR...
+	local store
+	store="$(ls_store)"
+	if [ -z "$store" ]; then return 1; fi
+	local user_expr
+	local registered_user
+	local user
+	local host
+	local key_path
+	for user_expr in "$@"; do
+		for registered_user in $(ls_user_list); do
+			user="${registered_user%%:*}"
+			host="${registered_user#*:}"
+			if [[ "$user_expr" == *@* ]]; then
+				ls_match "$user@$host" "$user_expr" >/dev/null || continue
+			else
+				ls_match "$user" "$user_expr" >/dev/null || continue
+			fi
+			key_path="$store/user/$user/$host.pubkey"
+			if [ -e "$key_path" ]; then
+				echo "$key_path"
+			fi
+		done
+	done | sort -u
+}
+
 # --
 # Tries to extract the user@host from the given key.
 function ls_pubkey_meta { # KEY
 	local key="${1:-}"
 	local fmt
-	fmt="$(ls_key_id "$key")"
+	fmt="$(ls_key_format "$key")"
 	case "$fmt" in
 	public:ssh*)
 		ls_key_cat "$key" | rev | cut -d' ' -f1 | rev
@@ -1240,7 +1301,6 @@ function ls_user_host { # USER? KEY?
 function ls_user_pubkey { # USER? KEY?
 	if [ -n "${2:-}" ]; then
 		# If a KEY is given, the we try to get a pubkey from it
-		echo "$2" | sha256sum
 		ls_pubkey_import "${2:-$LITTLESECRETS_KEY}"
 	else
 		# If not KEY is given, we look for a user.
@@ -1281,7 +1341,7 @@ function ls_user_privkey { # KEY?
 	else
 		local key="$1"
 		local key_fmt
-		key_fmt=$(ls_key_id "$key")
+		key_fmt=$(ls_key_format "$key")
 		if [[ "$key_fmt" == private:*pkcs8* ]]; then
 			# The given keypath is already in the right format
 			echo "$key"
@@ -1304,6 +1364,7 @@ function ls_user_privkey { # KEY?
 
 function ls_secret_list {
 	local secrets
+	local secret
 	secrets=$(ls_match_item "secret/*/secret.enc" "$@")
 	if [ -z "$secrets" ]; then
 		if [ -z "$*" ]; then
@@ -1378,7 +1439,7 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	local has_hmac
 	has_hmac="$(ls_option hmac)"
 	# This creates the secret key, if it is not given.
-	# NOTE that the key is ls_encoded.
+	# NOTE that the key is encoded with ls_encode.
 	local secret_key="${3:-}"
 	if [ -z "$secret_key" ]; then
 		secret_key="$(ls_key)"
@@ -1561,39 +1622,40 @@ function ls_secret_hmac_path { #SECRET
 	echo "$(ls_secret_path "$1")/secret.hmac"
 }
 
-# Emits JSON for a secret name/value pair. Handles binary detection & base64.
-# Usage: ls_secret_emit_json NAME VALUE
-function ls_secret_emit_json { # NAME VALUE
+# Emits the JSON fields for a secret name/value pair.
+function ls_json_emit_secret_value { # NAME VALUE INDENT?
 	local name="$1"
 	local value="$2"
+	local indent="${3:-}"
 	local tmp
 	tmp="$(ls_mkstemp)"
 	printf '%s' "$value" >"$tmp"
-	local is_bin=1
-	# Determine if we should treat as binary based on forced flags or detection
 	local force_enc="${LITTLESECRETS_FORCE_ENCODING:-}"
+	local is_binary=1
 	if [ "$force_enc" = "base64" ]; then
-		is_bin=0
+		is_binary=0
 	elif [ "$force_enc" = "text" ]; then
-		is_bin=1
+		is_binary=1
 	elif ls_is_binary_file "$tmp"; then
-		is_bin=0
+		is_binary=0
 	fi
-	if [ $is_bin -eq 0 ]; then
+	printf '%s"name": %s,\n' "$indent" "$(ls_json_string "$name")"
+	if [ "$is_binary" -eq 0 ]; then
 		local encoded_value
 		encoded_value="$(ls_file_base64 "$tmp")"
-		printf '{\n'
-		printf '  "name": %s,\n' "$(ls_json_string "$name")"
-		printf '  "value": %s,\n' "$(ls_json_string "$encoded_value")"
-		printf '  "encoding": "base64"\n'
-		printf '}\n'
+		printf '%s"value": %s,\n' "$indent" "$(ls_json_string "$encoded_value")"
+		printf '%s"encoding": "base64"' "$indent"
 	else
-		printf '{\n'
-		printf '  "name": %s,\n' "$(ls_json_string "$name")"
-		printf '  "value": %s\n' "$(ls_json_string "$value")"
-		printf '}\n'
+		printf '%s"value": %s' "$indent" "$(ls_json_string "$value")"
 	fi
 	unlink "$tmp"
+}
+
+# Emits JSON for a secret name/value pair. Handles binary detection & base64.
+function ls_secret_emit_json { # NAME VALUE
+	printf '{\n'
+	ls_json_emit_secret_value "$1" "$2" '  '
+	printf '\n}\n'
 }
 
 function ls_secret_ensure { # NAME
@@ -1691,11 +1753,10 @@ function ls_secret_verify { # NAME PRIVEY?
 	local store
 	store="$(ls_store)"
 	local secret_hmac_path="$store/secret/$1/secret.hmac"
-	# There is no hmac, so we can't verify but return a 0
+	# A missing HMAC is not a successful verification.
 	if [ -n "$(ls_option hmac)" ] && [ ! -e "$secret_hmac_path" ]; then
 		ls_log_warning "No hmac found for secret $1: $secret_hmac_path"
-		ls_log_tip "You can remove 'hmac' form LITTLESECRETS_OPTIONS to skip HMAC verification"
-		return 0
+		return 1
 	fi
 	local hmac
 	if ! hmac="$(ls_secret_hmac "$1" "$(ls_secret_key "$1" "${2:-}")")"; then
@@ -1741,6 +1802,13 @@ function ls_secret_grant { # SECRET USER_EXPR
 		return 1
 	fi
 
+	local recipient_keys
+	recipient_keys="$(ls_user_key_paths "$@")"
+	if [ -z "$recipient_keys" ]; then
+		ls_log_error "User not found: $1"
+		return 1
+	fi
+
 	# Process each matching secret
 	for secret in "${matching_secrets[@]}"; do
 		local secret_key
@@ -1751,48 +1819,26 @@ function ls_secret_grant { # SECRET USER_EXPR
 
 		ls_log_message "Granting access to secret: $secret"
 
-		for user_expr in "$@"; do
-			local user="${user_expr%@*}"
-			local recipient_keys=()
-			if [ "$user_expr" = "*" ]; then
-				# Grant to every registered user on every registered host.
-				for registered_user in $(ls_user_list); do
-					local registered_name="${registered_user%%:*}"
-					local registered_host="${registered_user#*:}"
-					local registered_key="$store/user/$registered_name/$registered_host.pubkey"
-					if [ -e "$registered_key" ]; then
-						recipient_keys+=("$registered_key")
-					fi
-				done
-			elif [[ "$user_expr" == *@* ]]; then
-				# If user@host format, grant only to that specific host
-				local user_pubkey
-				user_pubkey=$(ls_user_pubkey "$user_expr")
-				if [ -n "$user_pubkey" ]; then
-					recipient_keys+=("$user_pubkey")
-				fi
-			else
-				# Otherwise grant to all host keys for the user
-				for pubkey_path in $(ls_user_list_keys "$user"); do
-					recipient_keys+=("$pubkey_path")
-				done
+		for pubkey_path in $recipient_keys; do
+			local recipient_user
+			local recipient_host
+			recipient_user=$(basename "$(dirname "$pubkey_path")")
+			recipient_host=$(basename "$pubkey_path" .pubkey)
+			local secret_key_path="$store/secret/$secret/$recipient_user@$recipient_host.key"
+			local secret_key_tmp
+			secret_key_tmp=$(mktemp "${secret_key_path}.tmp.XXXXXX")
+			local new_grant=0
+			if [ ! -e "$secret_key_path" ]; then
+				new_grant=1
 			fi
-
-			for pubkey_path in "${recipient_keys[@]}"; do
-				local recipient_user
-				local recipient_host
-				recipient_user=$(basename "$(dirname "$pubkey_path")")
-				recipient_host=$(basename "$pubkey_path" .pubkey)
-				local secret_key_path="$store/secret/$secret/$recipient_user@$recipient_host.key"
-				local new_grant=0
-				if [ ! -e "$secret_key_path" ]; then
-					new_grant=1
-				fi
-				ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_path"
-				if [ "$new_grant" = 1 ]; then
-					ls_log_error "Granted access to secret '$secret' for '$recipient_user@$recipient_host'"
-				fi
-			done
+			if ! ls_encrypt_asym "$pubkey_path" <(echo "$secret_key") >"$secret_key_tmp"; then
+				ls_unlink "$secret_key_tmp"
+				return 1
+			fi
+			mv -f "$secret_key_tmp" "$secret_key_path"
+			if [ "$new_grant" = 1 ]; then
+				ls_log_action "Granted access to secret '$secret' for '$recipient_user@$recipient_host'"
+			fi
 		done
 	done
 }
@@ -1828,21 +1874,16 @@ function ls_secret_revoke { # SECRET USER_EXPR
 	if [ -z "$store" ]; then return 1; fi
 	local secret="$1"
 	shift
-	for user_expr in "$@"; do
-		local user
-		user=$(ls_user_name "$user_expr")
-		local host
-		host=$(ls_user_host "$user_expr")
-
-		if [[ "$user_expr" == *@* ]]; then
-			# If user@host format, revoke only from that specific host
-			local secret_key_path="$store/secret/$secret/$user@$host.key"
-			if [ -e "$secret_key_path" ]; then
-				rm -f "$secret_key_path"
-			fi
-		else
-			# Otherwise revoke from all host keys for the user
-			rm -f "$store/secret/$secret/$user@*.key"
+	local pubkey_path
+	local user
+	local host
+	local secret_key_path
+	for pubkey_path in $(ls_user_key_paths "$@"); do
+		user="$(basename "$(dirname "$pubkey_path")")"
+		host="$(basename "$pubkey_path" .pubkey)"
+		secret_key_path="$store/secret/$secret/$user@$host.key"
+		if [ -e "$secret_key_path" ]; then
+			rm -f "$secret_key_path"
 		fi
 	done
 }
@@ -1851,24 +1892,36 @@ function ls_user_deregister { # USER KEY?
 	local store
 	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
-	local user="$1"
+	local user_input="$1"
 	local key="${2:-}"
+	local user
+	user="$(ls_user_name "$user_input")"
+	local host
+	host="$(ls_user_host "$user_input")"
+	local key_path
+	local key_paths=()
+	if [[ "$user_input" == *@* ]]; then
+		key_paths=("$store/user/$user/$host.pubkey")
+	else
+		for key_path in "$store/user/$user"/*.pubkey; do
+			if [ -e "$key_path" ]; then
+				key_paths+=("$key_path")
+			fi
+		done
+	fi
 	if [ -n "$key" ]; then
-		# Only remove if key matches
-		local current
-		current=$(ls_user_pubkey "$user")
 		local given
 		given=$(ls_pubkey_import "$key")
-		if [ "$current" = "$given" ]; then
-			rm -f "$store/user/$user.pubkey"
-			return 0
-		fi
+		for key_path in "${key_paths[@]}"; do
+			if [ -e "$key_path" ] && cmp -s "$key_path" <(printf '%s\n' "$given"); then
+				rm -f "$key_path"
+				return 0
+			fi
+		done
 		return 1
-	else
-		# Remove all keys
-		rm -f "$store/user/$user.pubkey"
-		return 0
 	fi
+	if [ "${#key_paths[@]}" -eq 0 ]; then return 1; fi
+	rm -f "${key_paths[@]}"
 }
 
 function ls_secret_export {
@@ -1963,39 +2016,9 @@ function ls_secret_export_json_object {
 		printf "    \"error\": %s\n" "$(ls_json_string "Unable to retrieve secret")"
 		printf "  }"
 	else
-		# Output the secret as JSON object
-		local tmp
-		tmp="$(ls_mkstemp)"
-		printf '%s' "$secval" >"$tmp"
-		local force_enc="${LITTLESECRETS_FORCE_ENCODING:-}"
-		if [ "$force_enc" = "base64" ]; then
-			local encoded_value
-			encoded_value="$(ls_file_base64 "$tmp")"
-			printf "  {\n"
-			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
-			printf "    \"value\": %s,\n" "$(ls_json_string "$encoded_value")"
-			printf "    \"encoding\": \"base64\"\n"
-			printf "  }"
-		elif [ "$force_enc" = "text" ]; then
-			printf "  {\n"
-			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
-			printf "    \"value\": %s\n" "$(ls_json_string "$secval")"
-			printf "  }"
-		elif ls_is_binary_file "$tmp"; then
-			local encoded_value
-			encoded_value="$(ls_file_base64 "$tmp")"
-			printf "  {\n"
-			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
-			printf "    \"value\": %s,\n" "$(ls_json_string "$encoded_value")"
-			printf "    \"encoding\": \"base64\"\n"
-			printf "  }"
-		else
-			printf "  {\n"
-			printf "    \"name\": %s,\n" "$(ls_json_string "$secname")"
-			printf "    \"value\": %s\n" "$(ls_json_string "$secval")"
-			printf "  }"
-		fi
-		unlink "$tmp"
+		printf '  {\n'
+		ls_json_emit_secret_value "$secname" "$secval" '    '
+		printf '\n  }'
 	fi
 }
 
@@ -2039,41 +2062,19 @@ function ls_info {
 		# JSON output format
 		echo "{"
 		printf '  "path": %s,\n' "$(ls_json_string "$abs_path")"
-		# Convert users string to JSON array
-		printf '  "users": ['
-		local first=true
-		for user in $users; do
-			if [ "$first" = true ]; then
-				first=false
-			else
-				printf ', '
-			fi
-			printf '%s' "$(ls_json_string "$user")"
-		done
-		printf '],\n'
-		# Convert secrets string to JSON array
-		printf '  "secrets": ['
-		first=true
-		for secret in $secrets; do
-			if [ "$first" = true ]; then
-				first=false
-			else
-				printf ', '
-			fi
-			printf '%s' "$(ls_json_string "$secret")"
-		done
-		printf '],\n'
-		printf '  "repositories": ['
-		first=true
-		for repository in $repositories; do
-			if [ "$first" = true ]; then
-				first=false
-			else
-				printf ', '
-			fi
-			printf '%s' "$(ls_json_string "$repository")"
-		done
-		printf ']\n'
+		local -a user_values=()
+		local -a secret_values=()
+		local -a repository_values=()
+		read -r -a user_values <<<"$users"
+		read -r -a secret_values <<<"$secrets"
+		read -r -a repository_values <<<"$repositories"
+		printf '  "users": '
+		ls_json_emit_string_array '' "${user_values[@]}"
+		printf ',\n  "secrets": '
+		ls_json_emit_string_array '' "${secret_values[@]}"
+		printf ',\n  "repositories": '
+		ls_json_emit_string_array '' "${repository_values[@]}"
+		printf '\n'
 		echo "}"
 	else
 		# Default text output format
@@ -2124,6 +2125,66 @@ function ls_secret_find {
 	fi
 }
 
+function ls_cli_error {
+	ls_log_error "$*"
+	return 1
+}
+
+function ls_cli_help {
+	local command="${1:-}"
+	if [ -n "$command" ]; then
+		local help_line
+		help_line="$(grep -E "^[[:space:]]## [^:]+: ((${command})(\||[[:space:]])|${command}[[:space:]])" "$LITTLESECRETS_SCRIPT_PATH" | head -n 1 || true)"
+		if [ -z "$help_line" ]; then
+			ls_cli_error "Unknown command: $command"
+			return 1
+		fi
+		printf 'Usage: littlesecrets %s\n\n' "$(printf '%s\n' "$help_line" | sed -E 's/^[[:space:]]## [^:]+: //; s/[[:space:]]{2,}.*$//')"
+		printf '%s\n' "$help_line" | sed -E 's/^[[:space:]]## [^:]+: [^[:space:]]+([[:space:]]+[^[:space:]]+)*[[:space:]]{2,}//'
+		return 0
+	fi
+	echo "Usage: littlesecrets [GLOBAL_OPTION]... COMMAND [ARGUMENT]..."
+	echo ""
+	echo "Arguments: <NAME> required, [NAME] optional, <NAME>... one or more, [NAME...] zero or more"
+	echo "Expressions ending in _EXPR are shell globs; quote them to prevent shell expansion."
+	echo "Global options must appear before COMMAND. The nearest .littlesecrets store is used by default."
+	echo ""
+	echo "Options:"
+	printf '  %-25s  %s\n' '-h, --help' 'Show this help message'
+	printf '  %-25s  %s\n' '-v, --version' 'Show version information'
+	printf '  %-25s  %s\n' '-q, --quiet' 'Suppress warnings and routine diagnostics'
+	printf '  %-25s  %s\n' '--verbose' 'Show routine details and progress'
+	printf '  %-25s  %s\n' '--debug' 'Show diagnostic details and error stack traces'
+	printf '  %-25s  %s\n' '-k, --key PRIVATE_KEY' 'Set the private key used for decryption'
+	printf '  %-25s  %s\n' '-u, --user USER' "Set the user name (default: \$USER)"
+	printf '  %-25s  %s\n' '--host HOST' "Set the host name (default: \$HOSTNAME)"
+	printf '  %-25s  %s\n' '-s, --store PATH' 'Set the store path (default: .littlesecrets)'
+	printf '  %-25s  %s\n' '-f, --format FORMAT' 'Set output format: text or json'
+	printf '  %-25s  %s\n' '--binary' 'Use base64 for binary values in JSON output'
+	printf '  %-25s  %s\n' '--text' 'Force text values in JSON output'
+	echo ""
+	grep '^[[:space:]]## [^:]*:' "$LITTLESECRETS_SCRIPT_PATH" |
+		sed -E 's/^[[:space:]]## ([^:]+): /\1\t/' |
+		awk -F '\t' '
+		{
+			separator = index($2, "  ")
+			syntax = substr($2, 1, separator - 1)
+			description = substr($2, separator + 2)
+			if (length(syntax) > width) width = length(syntax)
+			entries[++count] = $1 SUBSEP syntax SUBSEP description
+		}
+		END {
+			for (i = 1; i <= count; i++) {
+				split(entries[i], parts, SUBSEP)
+				items[parts[1]] = items[parts[1]] sprintf("  %-" width "s  %s\n", parts[2], parts[3])
+			}
+			for (i = 1; i <= 7; i++) {
+				category = (i == 1 ? "Store" : i == 2 ? "Secrets" : i == 3 ? "Access" : i == 4 ? "Users" : i == 5 ? "Integrity" : i == 6 ? "Shell" : "Meta")
+				if (items[category] != "") printf "%s:\n%s", category, items[category]
+			}
+		}'
+}
+
 # -----------------------------------------------------------------------------
 #
 # CLI
@@ -2131,36 +2192,59 @@ function ls_secret_find {
 # -----------------------------------------------------------------------------
 
 function ls_cli {
-	# Define version
+	local binary_requested=0
+	local text_requested=0
 
 	# Parse global options first
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+		-q | --quiet)
+			LS_LOG_FILTER=""
+			shift
+			;;
+		--verbose)
+			LS_LOG_FILTER="warning tip action message progress"
+			shift
+			;;
+		--debug)
+			LS_LOG_FILTER="warning tip action message progress output debug"
+			shift
+			;;
+		--)
+			shift
+			break
+			;;
 		-k | --key)
+			if [ $# -lt 2 ]; then ls_cli_error "$1 requires PRIVATE_KEY"; return 1; fi
 			LITTLESECRETS_KEY="$2"
 			shift 2
 			;;
 		-u | --user)
+			if [ $# -lt 2 ]; then ls_cli_error "$1 requires USER"; return 1; fi
 			LITTLESECRETS_USER="$2"
 			shift 2
 			;;
 		--host)
+			if [ $# -lt 2 ]; then ls_cli_error "$1 requires HOST"; return 1; fi
 			LITTLESECRETS_HOST="$2"
 			shift 2
 			;;
 		-s | --store)
+			if [ $# -lt 2 ]; then ls_cli_error "$1 requires PATH"; return 1; fi
 			LITTLESECRETS_STORE="$2"
 			shift 2
 			;;
 		--binary)
 			# Force JSON/base64 encoding of value fields (when in JSON mode)
 			LITTLESECRETS_FORCE_ENCODING="base64"
+			binary_requested=1
 			shift
 			;;
 		--text)
 			# Force treat values as text (never base64) even if detection says binary
 			LITTLESECRETS_FORCE_ENCODING="text"
+			text_requested=1
 			shift
 			;;
 		-fjson)
@@ -2174,6 +2258,8 @@ function ls_cli {
 			shift
 			;;
 		-f | --format)
+			if [ $# -lt 2 ]; then ls_cli_error "$1 requires FORMAT (text or json)"; return 1; fi
+			if [ "$2" != "text" ] && [ "$2" != "json" ]; then ls_cli_error "Invalid format: $2 (expected text or json)"; return 1; fi
 			# Handle -f json format (separate flag and value)
 			LITTLESECRETS_FORMAT="$2"
 			shift 2
@@ -2198,37 +2284,40 @@ function ls_cli {
 
 	local cmd="${1:-}"
 	shift || true
+	if [ "$binary_requested" -eq 1 ] && [ "$text_requested" -eq 1 ]; then
+		ls_cli_error "--binary and --text cannot be used together"
+		return 1
+	fi
+	if [ "$binary_requested" -eq 1 ] || [ "$text_requested" -eq 1 ]; then
+		if [ "${LITTLESECRETS_FORMAT:-}" != "json" ]; then
+		ls_cli_error "--binary and --text require --format json"
+		return 1
+		fi
+	fi
+	if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+		ls_cli_help "$cmd"
+		return $?
+	fi
 
 	case "$cmd" in
-	## help              Show this help message
+	## Meta: help [COMMAND]  Show help for a command
 	"help" | h)
-		echo "Usage: littlesecrets [options] <command> [args...]"
-		echo ""
-		echo "Options:"
-		echo "  -h, --help        Show this help message"
-		echo "  -v, --version     Show version information"
-		echo "  -k, --key KEY     Set private key path"
-		echo "  -u, --user USER   Set user name"
-		echo "  --host HOST       Set host name (default: \$HOSTNAME)"
-		echo "  -s, --store PATH  Set store path"
-		echo "  -f, --format FMT  Set output format (text, json)"
-		echo "      --binary      Force base64 encoding in JSON output"
-		echo "      --text        Force plain text values in JSON output"
-		echo ""
-		echo "Commands:"
-		grep '^[[:space:]]##[[:space:]]' "$0" | sed 's/^[[:space:]]*##[[:space:]]//'
-		return 0
+		if [ "$#" -gt 1 ]; then ls_cli_error "Usage: littlesecrets help [COMMAND]"; return 1; fi
+		ls_cli_help "${1:-}"
+		return $?
 		;;
-	## version           Show version information
+	## Meta: version  Show version information
 	"version" | v)
+		if [ "$#" -ne 0 ]; then ls_cli_error "version accepts no arguments"; return 1; fi
 		echo "littlesecrets version $LITTLESECRETS_VERSION"
 		return 0
 		;;
-	## init [path]        Initialize a new secrets store
+	## Store: init [DIRECTORY]  Create DIRECTORY/.littlesecrets
 	"init")
+		if [ "$#" -gt 1 ]; then ls_cli_error "init accepts at most DIRECTORY"; return 1; fi
 		ls_store_init "${1:-.}"
 		;;
-	## list|ls [expr...]  List secrets matching expr
+	## Secrets: list|ls [SECRET_EXPR...]  List secret names and recipients
 	"list" | "ls")
 		if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
 			# JSON output format: {"secret.name": ["user@host", ...]}
@@ -2257,8 +2346,9 @@ function ls_cli {
 			done
 		fi
 		;;
-	## get <name>         Get a secret's value
+	## Secrets: get <SECRET>  Write a secret value
 	"get")
+		if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then ls_cli_error "Usage: littlesecrets get <SECRET>"; return 1; fi
 		if [ -z "${1:-}" ]; then
 			ls_log_error "get: Missing secret name"
 			return 1
@@ -2268,7 +2358,7 @@ function ls_cli {
 			return 1
 
 		elif [ -n "$(ls_option hmac)" ] && ! ls_secret_verify "$1"; then
-			echo "Secret HMAC cannot be validated: $1"
+			ls_log_error "Secret HMAC cannot be validated: $1"
 			ls_log_error "Secret signature differs: $1"
 			ls_log_tip "Secret likely has been updated and your key is out of date"
 			return 1
@@ -2287,8 +2377,9 @@ function ls_cli {
 			fi
 		fi
 		;;
-	## add|set <name> [value] Set a secret's value
+	## Secrets: add|set <SECRET> [VALUE]  Set a value, or read it from stdin
 	"add" | "set")
+		if [ "$#" -lt 1 ] || [ "$#" -gt 4 ]; then ls_cli_error "Usage: littlesecrets add|set <SECRET> [VALUE]"; return 1; fi
 		if [ -z "${1:-}" ]; then
 			ls_log_error "add: Missing secret name"
 			return 1
@@ -2321,50 +2412,56 @@ function ls_cli {
 			fi
 		fi
 		;;
-	## hash NAMES* Ensures the secrets habe a matching hash
+	## Integrity: hash [SECRET_EXPR...]  Create or update HMACs
 	"hash")
-		for SECRET in $(ls_secret_list "$@"); do
-			SECRET="${SECRET%%:*}"
-			HMAC_PATH="$(ls_secret_hmac_path "$SECRET")"
-			HMAC="$(ls_secret_hmac "$SECRET")"
-			if [ ! -e "$HMAC_PATH" ]; then
-				ls_log_action "Creating HMAC for secret $SECRET at $HMAC_PATH"
-				echo -n "$HMAC" >"$HMAC_PATH"
-			elif [ "$(cat "$HMAC_PATH")" != "$HMAC" ]; then
-				ls_log_warning "Existing HMAC differs for secret $SECRET, updating."
-				echo -n "$HMAC" >"$HMAC_PATH"
+		local secret
+		local hmac_path
+		local hmac
+		for secret in $(ls_secret_list "$@"); do
+			secret="${secret%%:*}"
+			hmac_path="$(ls_secret_hmac_path "$secret")"
+			hmac="$(ls_secret_hmac "$secret")"
+			if [ ! -e "$hmac_path" ]; then
+				ls_log_action "Creating HMAC for secret $secret at $hmac_path"
+				echo -n "$hmac" >"$hmac_path"
+			elif [ "$(cat "$hmac_path")" != "$hmac" ]; then
+				ls_log_warning "Existing HMAC differs for secret $secret, updating."
+				echo -n "$hmac" >"$hmac_path"
 			fi
 		done
 		;;
-	## verify NAMES* Verifies the decrypted secret against the hash
+	## Integrity: verify [SECRET_EXPR...]  Verify HMACs without modifying secrets
 	"verify")
-		created=()
-		valid=()
-		invalid=()
-		nokey=()
-		for SECRET_NAME in $(ls_secret_list "$@"); do
-			SECRET_NAME="${SECRET_NAME%%:*}"
-			HMAC_PATH="$(ls_secret_hmac_path "$SECRET_NAME")"
-			echo -n "Verifying ${SECRET_NAME}… "
-			if [ ! -e "$HMAC_PATH" ]; then
+		local -a created=()
+		local -a valid=()
+		local -a invalid=()
+		local -a nokey=()
+		local secret_name
+		local hmac_path
+		local hmac
+		for secret_name in $(ls_secret_list "$@"); do
+			secret_name="${secret_name%%:*}"
+			hmac_path="$(ls_secret_hmac_path "$secret_name")"
+			ls_log_progress "Verifying $secret_name"
+			if [ ! -e "$hmac_path" ]; then
 				# NOTE: Leaving this for reference
-				if HMAC=$(ls_secret_hmac "$SECRET_NAME"); then
-					echo "${GREEN}CREATED${RESET}"
-					ls_log_action "Creating HMAC signature for secret: $SECRET_NAME"
-					echo -n "$HMAC" >"$HMAC_PATH"
-					created+=("$SECRET_NAME")
+				if hmac=$(ls_secret_hmac "$secret_name"); then
+					ls_log_progress "Created HMAC: $secret_name"
+					ls_log_action "Creating HMAC signature for secret: $secret_name"
+					echo -n "$hmac" >"$hmac_path"
+					created+=("$secret_name")
 				else
-					nokey+=("$SECRET_NAME")
-					echo "${ORANGE}no hash${RESET}"
+					nokey+=("$secret_name")
+					ls_log_progress "No HMAC: $secret_name"
 				fi
-			elif [ "$(cat "$HMAC_PATH")" != "$(ls_secret_hmac "$SECRET_NAME")" ]; then
-				ls_log_warning "Existing HMAC differs for secret $SECRET_NAME"
+			elif [ "$(cat "$hmac_path")" != "$(ls_secret_hmac "$secret_name")" ]; then
+				ls_log_warning "Existing HMAC differs for secret $secret_name"
 				ls_log_tip "Most likely the original secret has changed and you haven't been granted the key."
-				invalid+=("$SECRET_NAME")
-				echo "${RED}INVALID${RESET}"
+				invalid+=("$secret_name")
+				ls_log_progress "Invalid HMAC: $secret_name"
 			else
-				valid+=("$SECRET_NAME")
-				echo "${GREEN}OK${RESET}"
+				valid+=("$secret_name")
+				ls_log_progress "Valid HMAC: $secret_name"
 			fi
 		done
 		if [ ${#valid[@]} -ne 0 ]; then ls_log_message "Valid: ${GREEN}${valid[*]}${RESET}"; fi
@@ -2377,8 +2474,9 @@ function ls_cli {
 			return 1
 		fi
 		;;
-	## remove <name>      Remove a secret
+	## Secrets: remove <SECRET>  Remove a secret
 	"remove")
+		if [ "$#" -ne 1 ]; then ls_cli_error "Usage: littlesecrets remove <SECRET>"; return 1; fi
 		if [ -z "${1:-}" ]; then
 			ls_log_error "remove: Missing secret name"
 			return 1
@@ -2386,8 +2484,9 @@ function ls_cli {
 		ls_secret_remove "$1"
 		return $?
 		;;
-	## grant <name> <expr...> Grant access to users matching expr
+	## Access: grant <SECRET_EXPR> <USER_EXPR...>  Grant matching users access
 	"grant")
+		if [ "$#" -lt 2 ]; then ls_cli_error "Usage: littlesecrets grant <SECRET_EXPR> <USER_EXPR...>"; return 1; fi
 		if [ -z "${1:-}" ]; then
 			ls_log_error "grant: Missing secret name, expecting SECRETS USER"
 			return 1
@@ -2398,22 +2497,25 @@ function ls_cli {
 		ls_secret_grant "$1" "${@:2}"
 		return $?
 		;;
-	## revoke <name> <expr...> Revoke access from users matching expr
+	## Access: revoke <SECRET_EXPR> <USER_EXPR...>  Revoke matching users' access
 	"revoke")
+		if [ "$#" -lt 2 ]; then ls_cli_error "Usage: littlesecrets revoke <SECRET_EXPR> <USER_EXPR...>"; return 1; fi
 		if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
 			ls_log_error "revoke: Missing secret name or user pattern"
 			return 1
 		fi
-		ls_secret_revoke "$1" "$2"
+		ls_secret_revoke "$1" "${@:2}"
 		return $?
 		;;
-	## register [user] [key] Register a user's public key
+	## Users: register [USER[@HOST]] [PUBLIC_KEY]  Register a public key
 	"register")
+		if [ "$#" -gt 2 ]; then ls_cli_error "Usage: littlesecrets register [USER[@HOST]] [PUBLIC_KEY]"; return 1; fi
 		ls_user_register "${1:-}" "${2:-}"
 		return $?
 		;;
-	## deregister <user> [key] De-register a user's public key
+	## Users: deregister <USER[@HOST]> [PUBLIC_KEY]  Remove registered public keys
 	"deregister")
+		if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then ls_cli_error "Usage: littlesecrets deregister <USER[@HOST]> [PUBLIC_KEY]"; return 1; fi
 		if [ -z "${1:-}" ]; then
 			ls_log_error "deregister: Missing user"
 			return 1
@@ -2421,7 +2523,7 @@ function ls_cli {
 		ls_user_deregister "$1" "${2:-}"
 		return $?
 		;;
-	## users [expr...]    List users matching expr
+	## Users: users [USER_EXPR...]  List registered users and hosts
 	"users")
 		if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
 			# JSON output format: {"user.name": ["user.host", ...]}
@@ -2469,7 +2571,7 @@ function ls_cli {
 		fi
 		return $?
 		;;
-	## access [expr...]   List users with access to secrets matching expr
+	## Access: access [SECRET_EXPR...]  List recipients by secret
 	"access")
 		if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
 			# JSON output format: {"secret.name": ["user@host", ...]}
@@ -2536,17 +2638,18 @@ function ls_cli {
 			fi
 		fi
 		;;
-	## export [VAR=secret...]   Exports the given secrets as variables
+	## Shell: export [VAR=SECRET...]  Output shell assignments for secrets
 	"export")
 		ls_secret_export "$@"
 		return $?
 		;;
-	## ensure <name>      Ensure a secret exists (create if missing)
+	## Secrets: ensure <SECRET>  Return a value, creating it if missing
 	"ensure")
+		if [ "$#" -ne 1 ]; then ls_cli_error "Usage: littlesecrets ensure <SECRET>"; return 1; fi
 		ls_secret_ensure "$@"
 		return $?
 		;;
-	## has <expr...>      Check if secrets matching expr exist (returns 0 if found)
+	## Secrets: has <SECRET_EXPR...>  Exit 0 when any secret matches
 	"has")
 		if [ -z "${1:-}" ]; then
 			ls_log_error "has: Missing secret pattern"
@@ -2560,13 +2663,15 @@ function ls_cli {
 			return 1
 		fi
 		;;
-	## find <nameish>     Find matching secrets in all ancestor repositories
+	## Store: find <SECRET_EXPR>  Find secrets in every ancestor store
 	"find")
+		if [ "$#" -ne 1 ]; then ls_cli_error "Usage: littlesecrets find <SECRET_EXPR>"; return 1; fi
 		ls_secret_find "$@"
 		return $?
 		;;
-	## info              Show repository information (path, users, secrets, repositories)
+	## Store: info  Show the active and ancestor stores
 	"info")
+		if [ "$#" -ne 0 ]; then ls_cli_error "info accepts no arguments"; return 1; fi
 		ls_info "$@"
 		return $?
 		;;

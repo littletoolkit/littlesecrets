@@ -42,6 +42,12 @@ littlesecrets --user carol --host desktop register
 test-ok "User carol regsitered"
 test-noempty ".littlesecrets/user/carol/desktop.pubkey" "Carol key present"
 
+test-case "Deregister one host and all remaining hosts"
+littlesecrets deregister bob@laptop
+test-expect-failure test -e ".littlesecrets/user/bob/laptop.pubkey"
+littlesecrets deregister carol
+test-expect-failure test -e ".littlesecrets/user/carol/desktop.pubkey"
+
 # Test registering with explicit key file
 test-case "Register with explicit key file"
 ssh-keygen -t rsa -N "" -f "test-key" -C dave@server

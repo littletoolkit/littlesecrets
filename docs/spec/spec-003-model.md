@@ -5,23 +5,15 @@
 User: represents a user
 - name: the user name, like it appears in the `$USER`
 
-Group: represents a group of users
-- name: group name
-
 Device: represents a device used by a user
 - name: the device name, typically `$HOSTNAME`
 
 Store: the location where the secrets are stored.
-- path: the location of the store, as a filesystem path or URL
-- format: the format of the store (it could be file, an archive, a DB, etc)
+- path: the filesystem path of the store
 
 Secret: represents a value that needs to be kept secret
 - format: `text` or `binary`
 - data: the payload for the secret
-
-MetaData: represents key/value pairs of string/numbers/bool associated with a secret.
-- Format: defines the encryption format used for that secret
-- ShouldRotate: set to true after a secret was revoked for at least a user
 
 Key: represents the key used to symmetrically
 - format: the encryption key format
@@ -56,7 +48,6 @@ EnKey: represents a Secret Key encrypted with a user's PubKey
 
 Secrets:
 - Each Secret has one Key that is never stored
-- Each Secret has one MetaData that keeps track of its format & status.
 - Each Secret has at least one EnKey, so that it can be accessed by at least one user.
 
 EnKeys:
@@ -67,6 +58,5 @@ Key Pairs:
 - PubKey are stored for each user
 - PubKey has a matching PrivKey accessible on the local machine, used to decrypt EnKey
 
-Users & Groups:
-- Groups may have many users
-- Users may have many groups
+Groups and per-secret metadata are planned concepts; they are not represented in
+the current filesystem store or CLI.

@@ -126,11 +126,11 @@ ssh-keygen -t rsa -b 4096 -f charlie.rsa -P "" -C charlie@machine
 test-expect-success littlesecrets register charlie charlie.rsa.pub
 
 test-step "Grant hello.world to every registered user"
-ALL_GRANT_ERR=$(littlesecrets grant hello.world '*' 2>&1 >/dev/null)
-if echo "$ALL_GRANT_ERR" | grep -q "ERR.*Granted access to secret 'hello.world'"; then
-	test-ok "New grants are reported on ERR output"
+ALL_GRANT_ERR=$(littlesecrets --verbose grant hello.world '*' 2>&1 >/dev/null)
+if echo "$ALL_GRANT_ERR" | grep -q "ACT Granted access to secret 'hello.world'"; then
+	test-ok "New grants are reported as actions"
 else
-	test-fail "New grants should be reported on ERR output"
+	test-fail "New grants should be reported as actions"
 fi
 
 test-step "Verify every registered user can access hello.world"
@@ -152,14 +152,42 @@ fi
 test-step "Grant all secrets to Charlie using * wildcard"
 test-expect-success littlesecrets grant '*' charlie
 
-test-step "Verify Charlie can access all secrets"
-# Check each secret individually to isolate any failures
-if [ "$(littlesecrets -u charlie@machine -k charlie.rsa get hello.world)" = "$SECRET" ]; then
-	test-ok "Charlie can access hello.world"
+test-step "Revoke multiple recipients"
+test-expect-success littlesecrets revoke hello.world bob charlie
+test-expect-failure littlesecrets -u bob@machine -k bob.rsa get hello.world
+test-expect-failure littlesecrets -u charlie@machine -k charlie.rsa get hello.world
+
+test-step "Grant with a user glob"
+test-expect-success littlesecrets grant hello.world 'char*'
+test-expect "$(littlesecrets -u charlie@machine -k charlie.rsa get hello.world)" "$SECRET"
+
+test-step "Rejects grants for missing secrets and users"
+if MISSING_SECRET_ERR=$(littlesecrets grant missing.secret charlie 2>&1 >/dev/null); then
+		test-fail "Missing secret should fail"
+elif echo "$MISSING_SECRET_ERR" | grep -q "No secrets match pattern: missing.secret"; then
+		test-ok "Missing secret is reported"
 else
-	test-fail "Charlie cannot access hello.world"
+		test-fail "Missing secret should be reported"
 fi
 
+if MISSING_USER_ERR=$(littlesecrets grant hello.world missing-user 2>&1 >/dev/null); then
+		test-fail "Missing user should fail"
+elif echo "$MISSING_USER_ERR" | grep -q "User not found: missing-user"; then
+		test-ok "Missing user is reported"
+else
+		test-fail "Missing user should be reported"
+fi
+
+if MISSING_HOST_ERR=$(littlesecrets grant hello.world charlie@missing-machine 2>&1 >/dev/null); then
+		test-fail "Missing user host should fail"
+elif echo "$MISSING_HOST_ERR" | grep -q "User not found: charlie@missing-machine"; then
+		test-ok "Missing user host is reported"
+else
+		test-fail "Missing user host should be reported"
+fi
+
+test-step "Verify Charlie retains access to remaining secrets"
+# Check each secret individually to isolate any failures
 if [ "$(littlesecrets -u charlie@machine -k charlie.rsa get alice.secret)" = "$ALICE_SECRET" ]; then
 	test-ok "Charlie can access alice.secret"
 else

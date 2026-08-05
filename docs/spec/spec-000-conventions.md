@@ -4,7 +4,8 @@ Naming conventions:
 - Globals are `UPPER_CASE`
 - Classes, Singletons, Structures, Types are `PascalCase`
 - Acronyms are `UPPERCASE`, like `HTTP`.
-- Functions, methods and parameters are `camelCase`
+- Functions and parameters are `snake_case`, including the `ls_<domain>_<operation>`
+  form used by the shell API.
 - Class methods should be `CamelCase`
 - Local variables are `snake_case`
 - Short lived variables should be short (`i`, `k`, `v`, `r`)
@@ -19,4 +20,3 @@ Implementation Style:
 - Favor the use of the standard library .
 - Minimise the use of third party libraries.
 - Define interfaces when using third party libraries so that they can be swapper later.
-

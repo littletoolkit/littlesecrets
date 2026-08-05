@@ -1,28 +1,41 @@
 # Command Line Interface
 
-The tool should have the following CLI:
+The tool exposes the following CLI. `<NAME>` is required, `[NAME]` is optional,
+`<NAME>...` means one or more arguments, and `[NAME...]` means zero or more.
+`*_EXPR` arguments are quoted shell glob expressions.
 
-- `add|set SECRET [CONTENT]` sets the given secret to the given content.
-- `get SECRET` returns the given secret.
-- `list EXPR…` returns a list of secrets that match any of `EXPR`
-- `access EXPR…` shows who can access the secrets that match any of `EXPR`
-- `remove SECRET` removes the secret
-- `grant SECRET EXPR…` grants the secrets to all users matching any of `EXPR`; a user expression of `*` grants access to every registered user and host
-- `revoke SECRET EXPR…` revoke the secrets from all users matching any of `EXPR`
-- `register USER KEY?` registers the given key for the given user
-- `deregister USER KEY?` de-registers the given key (or all key) for the given user
-- `ensure SECRET` ensures a secret exists (creates if missing)
-- `has EXPR…` checks if any secrets match the given patterns (returns 0 if found, 1 if not found)
-- `find NAMEISH` finds matching secrets in all littlesecrets repositories in the current path and its ancestors
-- `info` shows repository information (path, users, secrets)
+- `init [DIRECTORY]` creates `DIRECTORY/.littlesecrets`.
+- `list|ls [SECRET_EXPR...]` lists matching secret names and recipients.
+- `get SECRET` writes one secret value.
+- `add|set SECRET [VALUE]` sets a value, or reads it from stdin when omitted.
+- `ensure SECRET` returns a value, creating it when missing.
+- `remove SECRET` removes a secret.
+- `has SECRET_EXPR...` returns 0 if any secret matches, otherwise 1, and writes nothing.
+- `grant SECRET_EXPR USER_EXPR...` grants matching users access to matching secrets.
+- `revoke SECRET_EXPR USER_EXPR...` revokes matching users' access.
+- `access [SECRET_EXPR...]` lists recipients by secret.
+- `register [USER[@HOST]] [PUBLIC_KEY]` registers a public key.
+- `deregister USER[@HOST] [PUBLIC_KEY]` removes registered public keys.
+- `users [USER_EXPR...]` lists registered users and hosts.
+- `hash [SECRET_EXPR...]` creates or updates HMACs; no expression means all secrets.
+- `verify [SECRET_EXPR...]` verifies HMACs without modifying secrets; missing or invalid HMACs fail.
+- `export [VAR=SECRET...]` outputs shell assignments; no arguments means all secrets.
+- `find SECRET_EXPR` searches every ancestor store and prints `SECRET: STORE_PATH`.
+- `info` shows the active store and other ancestor stores.
+- `help [COMMAND]` shows general or command-specific help.
+- `version` shows version information.
 
 In the commands:
 
-- `EXPR` is a glob-like pattern, matching `*` and `?`
+- `SECRET_EXPR` and `USER_EXPR` are glob-like patterns, matching `*` and `?`; callers should quote them.
 - Any failure will return to an error message and a return code of `1`
-- `find` reports each matching secret and its repository path, and returns `1` when no match is found
+- Global options must appear before `COMMAND`; `COMMAND --help` is equivalent to `help COMMAND`.
+- `find` returns `1` when no match is found.
+- `verify` is read-only and returns `1` for missing, inaccessible, or invalid HMACs.
 
-The tool support the following global options:
+The tool supports the following global options. Missing values and invalid
+formats are errors. `--binary` and `--text` require JSON output and cannot be
+combined:
 
 - `-k|--key` set the private key to use for decryption (path or key contents)
 - `-u|--user` set the user name (defaults to `$USER`)
@@ -31,6 +44,17 @@ The tool support the following global options:
 - `-fjson | --format=json | -f json` switch output to JSON (supported by: `list`, `users`, `access`, `add`, `set`, `get`, `ensure`, `export`)
 - `--binary` (JSON mode) force base64 output for values (adds `"encoding":"base64"` even for textual secrets)
 - `--text` (JSON mode) force plain text output for values (suppresses `encoding` even for binary secrets)
+- `-q|--quiet` suppress warnings and routine diagnostics (errors are still reported)
+- `--verbose` show routine operation details and progress on stderr
+- `--debug` show diagnostic details and error stack traces on stderr
+
+Output conventions:
+
+- Command data is written to stdout only.
+- Diagnostics, warnings, and progress output are written to stderr.
+- The default level reports warnings, `--quiet` reports errors only, and `--verbose` reports routine action logs and progress.
+- `--debug` additionally shows external command output and error stack traces.
+- Colors are emitted only when stdout and stderr are terminals.
 
 The tool uses the following environment variables:
 
@@ -38,6 +62,7 @@ The tool uses the following environment variables:
 - `LITTLESECRETS_KEY` path to the user's SSH private key, defaults to `$HOME/.ssh/id_rsa`
 - `LITTLESECRETS_STORE` defaults to the name or path of the store, defaults to `.littlesecrets`
 - `LITTLESECRETS_OPENSSL_BIN` path to the OpenSSL binary, defaults to `openssl`. This is validated at startup (must be executable, cannot contain shell metacharacters) and made readonly to prevent tampering.
+- `LITTLESECRETS_LOG_FILTER` optional space-separated log categories for library callers. The default category is `warning`.
 
 Noting that:
 

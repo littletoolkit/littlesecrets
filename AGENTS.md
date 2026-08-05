@@ -11,7 +11,7 @@
 - **Shell scripts**: Use `#!/usr/bin/env bash`, `set -euo pipefail`, `shopt -s extglob`
 - **Naming**: 
   - Globals: `UPPER_CASE`
-  - Functions/parameters: `camelCase`
+  - Functions/parameters: `snake_case`
   - Local variables: `snake_case`
   - Classes/Types: `PascalCase`
 - **Style**: Write concise, compact code with minimal comments. Use short docstrings.
