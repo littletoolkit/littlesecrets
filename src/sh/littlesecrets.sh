@@ -17,6 +17,7 @@
 
 set -euo pipefail
 shopt -s extglob
+umask 077
 
 # --
 # We define the main internal variables
@@ -280,7 +281,7 @@ function ls_mkstemp {
 	# If there's a second argument, that's going to be the contents, previously
 	# encoded.
 	if [ -n "${1:-}" ]; then
-		echo -n "$1" | ls_decode >"$res"
+		printf '%s' "$1" | ls_decode >"$res"
 	fi
 	echo "$res"
 }
@@ -372,13 +373,32 @@ function ls_cleanup {
 			unlink "$path"
 		fi
 	done
-	if [ -n "${LS_TRAP_PREVIOUS}" ]; then
-		eval "$LS_TRAP_PREVIOUS"
+	if [ -n "${LS_TRAP_EXIT_PREVIOUS:-}" ]; then
+		eval "$LS_TRAP_EXIT_PREVIOUS"
+	fi
+}
+
+function ls_validate_name { # NAME
+	local name="${1:-}"
+	if [ -z "$name" ]; then
+		return 1
+	fi
+	if [[ "$name" == *"/"* ]] || [[ "$name" == *".."* ]]; then
+		return 1
+	fi
+	if [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+		return 0
+	else
+		return 1
 	fi
 }
 
 function ls_is_path { ## PATHLIKE
-	if [[ "${1:-}" =~ / ]] || [[ "${1:-}" != @LS:* ]]; then
+	local candidate="${1:-}"
+	if [ -z "$candidate" ] || [[ "$candidate" == *$'\n'* ]] || [[ "$candidate" == *" "* ]] || [[ "$candidate" == @LS:* ]] || [[ "$candidate" == *"BEGIN "* ]]; then
+		return 1
+	fi
+	if [[ "$candidate" == */* ]] || [ -e "$candidate" ]; then
 		return 0
 	else
 		return 1
@@ -511,7 +531,9 @@ function ls_json_is_binary() {
 	if [ -z "$str" ]; then
 		return 1
 	fi
-	if printf '%s' "$str" | LC_ALL=C grep -qP '[\x00-\x08\x0B\x0C\x0E-\x1F]'; then
+	local count
+	count="$(printf '%s' "$str" | tr -d '[:print:][:space:]' | tr -d '\200-\377' | wc -c)"
+	if [ "$count" -gt 0 ]; then
 		return 0
 	fi
 	return 1
@@ -529,7 +551,9 @@ function ls_is_binary_file() {
 	if [ ! -s "$path" ]; then
 		return 1
 	fi
-	if LC_ALL=C grep -qP '[\x00-\x08\x0B\x0C\x0E-\x1F\x80-\xFF]' "$path" 2>/dev/null; then
+	local count
+	count="$(tr -d '[:print:][:space:]' <"$path" | tr -d '\200-\377' | wc -c)"
+	if [ "$count" -gt 0 ]; then
 		return 0
 	fi
 	return 1
@@ -684,6 +708,7 @@ function ls_privkey_new { #KEYPATH
 	ls_mkparent "${1:-}"
 	if [ -n "${1:-}" ]; then
 		"$LITTLESECRETS_OPENSSL_BIN" genrsa -out "$1" 4096
+		chmod 400 "$1"
 	else
 		# When no path is provided, output to stdout directly
 		"$LITTLESECRETS_OPENSSL_BIN" genrsa 4096
@@ -837,11 +862,11 @@ function ls_key_format { ## KEY_OR_PATH?
 		tmp_file="$(ls_mkstemp)"
 		cat /dev/stdin >"$tmp_file"
 		file="$tmp_file"
-	elif [ ! -f "$file" ]; then
+	elif ! ls_is_path "$file"; then
 		# If the argument is not a file, we create a temp file with
-		# the contents
+		# the contents without stat-ing the filesystem with key material
 		tmp_file="$(ls_mkstemp)"
-		echo -n "$file" >"$tmp_file"
+		printf '%s' "$file" >"$tmp_file"
 		file="$tmp_file"
 	fi
 
@@ -907,6 +932,31 @@ function ls_is_encoded {
 	esac
 }
 
+# Converts stdin binary data to hex string without newlines
+function ls_bin2hex {
+	if command -v xxd >/dev/null 2>&1; then
+		xxd -p -c 256 | tr -d '\n'
+	else
+		od -An -tx1 -v | tr -d ' \t\n'
+	fi
+}
+
+# Converts stdin hex string to binary data
+function ls_hex2bin {
+	if command -v xxd >/dev/null 2>&1; then
+		xxd -r -p
+	else
+		awk '{
+			for(i=1; i<=length($0); i+=2) {
+				byte = substr($0, i, 2)
+				if (length(byte) == 2) {
+					printf "%c", strtonum("0x" byte)
+				}
+			}
+		}'
+	fi
+}
+
 # --
 # Safely encodes binary data to be stored in a variable
 function ls_encode {
@@ -943,10 +993,14 @@ function ls_encrypt_sym { # KEY
 	key_path=$(ls_mkstemp "$1")
 	local output_path
 	output_path=$(ls_mkstemp)
+	local pass_path
+	pass_path=$(ls_mkstemp)
 	local openssl_res=0
 	ls_log_output_start
+	# Convert raw key into hex to avoid line/newline/null truncation in OpenSSL -pass fd:
+	ls_bin2hex <"$key_path" >"$pass_path"
 	# NOTE: The fd anonymises the key path.
-	exec 3<"$key_path"
+	exec 3<"$pass_path"
 	if ! "$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out "$output_path" -pass fd:3 2> >(ls_log_external); then
 		openssl_res=1
 		ls_log_error "ls_encrypt_sym: Could not encrypt secret"
@@ -955,7 +1009,7 @@ function ls_encrypt_sym { # KEY
 	fi
 	exec 3<&-
 	ls_log_output_end
-	ls_unlink "$key_path" "$output_path"
+	ls_unlink "$key_path" "$output_path" "$pass_path"
 	return "$openssl_res"
 }
 
@@ -970,9 +1024,9 @@ function ls_hmac {
 		return 1
 	fi
 	local key_hex
-	key_hex="$(printf '%s' "$key" | xxd -p -c 128)"
+	key_hex="$(printf '%s' "$key" | ls_bin2hex)"
 	if [ "${#key_hex}" -gt 128 ]; then
-		key_hex="$(printf '%s' "$key" | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | xxd -p -c 64)"
+		key_hex="$(printf '%s' "$key" | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | ls_bin2hex)"
 	fi
 	while [ "${#key_hex}" -lt 128 ]; do key_hex+="00"; done
 	local inner_hex=""
@@ -988,11 +1042,11 @@ function ls_hmac {
 		outer_hex+="$byte"
 	done
 	local inner_digest
-	if ! inner_digest=$({ printf '%s' "$inner_hex" | xxd -r -p; cat "$path"; } | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | xxd -p -c 64); then
+	if ! inner_digest=$({ printf '%s' "$inner_hex" | ls_hex2bin; cat "$path"; } | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | ls_bin2hex); then
 		ls_log_error "ls_hmac: Could not generate secret HMAC"
 		return 1
 	fi
-	if ! { printf '%s' "$outer_hex$inner_digest" | xxd -r -p; } | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]'; then
+	if ! { printf '%s' "$outer_hex$inner_digest" | ls_hex2bin; } | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 | cut -d' ' -f2 | tr '[:lower:]' '[:upper:]'; then
 		ls_log_error "ls_hmac: Could not generate secret HMAC"
 		return 1
 	fi
@@ -1009,9 +1063,12 @@ function ls_decrypt_sym { # KEY
 	input_path=$(ls_mkstemp)
 	local output_path
 	output_path=$(ls_mkstemp)
+	local pass_path
+	pass_path=$(ls_mkstemp)
 	# Read input first
 	cat >"$input_path"
-	exec 3<"$key_path"
+	ls_bin2hex <"$key_path" >"$pass_path"
+	exec 3<"$pass_path"
 	if ! "$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3 2> >(ls_log_external); then
 		res=1
 		ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$res]"
@@ -1020,7 +1077,7 @@ function ls_decrypt_sym { # KEY
 	fi
 	exec 3<&-
 	ls_log_output_end
-	ls_unlink "$key_path" "$input_path" "$output_path"
+	ls_unlink "$key_path" "$input_path" "$output_path" "$pass_path"
 	return "$res"
 }
 
@@ -1045,7 +1102,7 @@ function ls_encrypt_asym { # PUBKEY? PATH?
 	ls_log_output_start
 	local output_path
 	output_path=$(ls_mkstemp)
-	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out "$output_path" 2> >(ls_log_external); then
+	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -encrypt -pubin -inkey "$pubkey_path" -in "${secret_path}" -out "$output_path" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 2> >(ls_log_external); then
 		res=1
 		ls_log_error "ls_encrypt_asym: Could not asymmetrically encrypt secret"
 	else
@@ -1080,7 +1137,7 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	ls_log_output_start
 	local output_path
 	output_path=$(ls_mkstemp)
-	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path" 2> >(ls_log_external); then
+	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 2> >(ls_log_external); then
 		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$?]"
 		res=1
 	else
@@ -1152,6 +1209,7 @@ function ls_user_registration_path { # USER? KEY?
 	user="$(ls_user_name "${1:-}")"
 	local host
 	host="$(ls_user_host "${1:-}" "${2:-}")"
+	if ! ls_validate_name "$user" || ! ls_validate_name "$host"; then return 1; fi
 	local keypath="$store/user/$user/$host.pubkey"
 	if [ -e "$keypath" ]; then
 		echo "$keypath"
@@ -1170,6 +1228,14 @@ function ls_user_register { # USER? KEY?
 	user="$(ls_user_name "${1:-}")"
 	local host
 	host="$(ls_user_host "${1:-}" "${2:-$LITTLESECRETS_KEY}")"
+	if ! ls_validate_name "$user"; then
+		ls_log_error "ls_user_register: Invalid user name: $user"
+		return 1
+	fi
+	if ! ls_validate_name "$host"; then
+		ls_log_error "ls_user_register: Invalid host name: $host"
+		return 1
+	fi
 	local key
 	key="$(ls_pubkey_import "${2:-$LITTLESECRETS_KEY}")"
 	ls_log_action "Registering user '$user' on '$host' from key '${2:-$LITTLESECRETS_KEY}'"
@@ -1181,9 +1247,8 @@ function ls_user_register { # USER? KEY?
 	fi
 	if [ -e "$user_key_path" ]; then
 		if ! cmp -s "$user_key_path" <(echo "$key"); then
-			# We're overriding a key
-			# TODO: We should probably warn here that the previous secrets
-			# will likely be invalidated
+			# We're overriding an existing key
+			ls_log_warning "SECURITY WARNING: Overwriting existing public key for '$user@$host'; previously encrypted secrets will become inaccessible to this key."
 			echo "$key" >"$user_key_path"
 		fi
 	else
@@ -1201,8 +1266,10 @@ function ls_user_list_keys { # USER? HOST?
 	if [ -z "$store" ]; then return 1; fi
 	local user
 	user="$(ls_user_name "${1:-}")"
+	if ! ls_validate_name "$user"; then return 1; fi
 	local host="${2:-}"
 	if [ -n "$host" ]; then
+		if ! ls_validate_name "$host"; then return 1; fi
 		# If host is specified, only return that specific key
 		local keypath="$store/user/$user/$host.pubkey"
 		if [ -e "$keypath" ]; then
@@ -1418,6 +1485,7 @@ function ls_try_write {
 			ls_log_message "Creating: $path_dst"
 		fi
 		cat "$path_tmp" >"$path_dst"
+		chmod 600 "$path_dst"
 		unlink "$path_tmp"
 		return 0
 	fi
@@ -1432,6 +1500,10 @@ function ls_try_write {
 # already there.
 function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	local secret_name="$1"
+	if ! ls_validate_name "$secret_name"; then
+		ls_log_error "ls_secret_write: Invalid secret name: $secret_name"
+		return 1
+	fi
 	local secret_path
 	secret_path="$(ls_store)/secret/$secret_name/secret.enc"
 	local secret_hmac_path
@@ -1538,11 +1610,12 @@ function ls_secret_add { # NAME VALUE PUBKEY? ENCKEY?
 function ls_secret_key_path { # SECRET USER[@HOST]?
 	local store
 	store="$(ls_store)"
+	if [ -z "$store" ] || ! ls_validate_name "$1"; then return 1; fi
 	local user
 	user=$(ls_user_name "${2:-}")
 	local host
 	host=$(ls_user_host "${2:-}")
-	if [ -z "$store" ]; then return 1; fi
+	if ! ls_validate_name "$user" || ! ls_validate_name "$host"; then return 1; fi
 	local secret_key_path="$store/secret/$1/$user@$host.key"
 	if [ -e "$secret_key_path" ]; then
 		echo "$secret_key_path"
@@ -1554,6 +1627,7 @@ function ls_secret_key_path { # SECRET USER[@HOST]?
 function ls_secret_path { # SECRET
 	# We locate the secret
 	local secret="$1"
+	if ! ls_validate_name "$secret"; then return 1; fi
 	local store
 	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
@@ -1589,9 +1663,9 @@ function ls_secret_key { # SECRET PRIVKEY?
 function ls_secret_hmac_key {
 	# NOTE: Any change in this format will then impact the HMAC signature
 	if [ -z "${1:-}" ]; then
-		ls_decode </dev/stdin | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | xxd -p -c 64
+		ls_decode </dev/stdin | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | ls_bin2hex
 	else
-		printf '%s' "$1" | ls_decode | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | xxd -p -c 64
+		printf '%s' "$1" | ls_decode | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 -binary | ls_bin2hex
 	fi
 }
 
@@ -1663,6 +1737,10 @@ function ls_secret_ensure { # NAME
 		ls_log_error "ensure: Missing secret name"
 		return 1
 	fi
+	if ! ls_validate_name "$1"; then
+		ls_log_error "ensure: Invalid secret name: $1"
+		return 1
+	fi
 	# Check if secret already exists (check the path, not access)
 	if ls_secret_path "$1" >/dev/null 2>&1; then
 		# Secret exists, check if user has access by trying to get the secret
@@ -1709,6 +1787,10 @@ function ls_secret_ensure { # NAME
 function ls_secret_get { # NAME PRIVKEY?
 	# We locate the secret
 	local secret="$1"
+	if ! ls_validate_name "$secret"; then
+		ls_log_error "ls_secret_get: Invalid secret name: $secret"
+		return 1
+	fi
 	local store
 	store="$(ls_store)"
 	local secret_path="$store/secret/$secret/secret.enc"
@@ -1736,9 +1818,23 @@ function ls_secret_get { # NAME PRIVKEY?
 		return 1
 	fi
 	# Second step, we decrypt the secret with
-	local secret
-	if secret="$(ls_decrypt_sym "$secret_key" <"$secret_path")"; then
-		echo -n "$secret"
+	local secret_val
+	if secret_val="$(ls_decrypt_sym "$secret_key" <"$secret_path")"; then
+		local secret_hmac_path="$store/secret/$secret/secret.hmac"
+		if [ -e "$secret_hmac_path" ]; then
+			local calculated_hmac
+			if ! calculated_hmac="$(printf '%s' "$secret_val" | ls_secret_hmac - "$secret_key")"; then
+				ls_log_error "ls_secret_get: Could not compute HMAC for secret: $secret"
+				return 1
+			elif ! cmp -s <(echo -n "$calculated_hmac") "$secret_hmac_path"; then
+				ls_log_error "ls_secret_get: Secret HMAC validation failed for: $secret"
+				return 1
+			fi
+		elif [ -n "$(ls_option hmac)" ]; then
+			ls_log_warning "ls_secret_get: Missing secret HMAC: $secret_hmac_path"
+			return 1
+		fi
+		echo -n "$secret_val"
 		return 0
 	else
 		ls_log_error "ls_secret_get: Could not retrieve secret '$1', secret decryption error: $secret_path"
@@ -1762,7 +1858,7 @@ function ls_secret_verify { # NAME PRIVEY?
 	if ! hmac="$(ls_secret_hmac "$1" "$(ls_secret_key "$1" "${2:-}")")"; then
 		ls_log_error "Verify could not compute HMAC for secret $1"
 		return 1
-	elif [ "$(cat "$secret_hmac_path")" != "$hmac" ]; then
+	elif ! cmp -s <(echo -n "$hmac") "$secret_hmac_path"; then
 		return 1
 	else
 		return 0
@@ -1776,7 +1872,12 @@ function ls_secret_remove {
 	local store
 	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
-	local secret_path="$store/secret/$1"
+	local secret="$1"
+	if ! ls_validate_name "$secret"; then
+		ls_log_error "ls_secret_remove: Invalid secret name: $secret"
+		return 1
+	fi
+	local secret_path="$store/secret/$secret"
 	if [ -e "$secret_path" ]; then
 		ls_log_action "Removing secret files: $(env -C "$secret_path" find . -name "*.*")"
 		rm -rf "$secret_path"
@@ -1827,6 +1928,7 @@ function ls_secret_grant { # SECRET USER_EXPR
 			local secret_key_path="$store/secret/$secret/$recipient_user@$recipient_host.key"
 			local secret_key_tmp
 			secret_key_tmp=$(mktemp "${secret_key_path}.tmp.XXXXXX")
+			LS_CLEANUP+=("$secret_key_tmp")
 			local new_grant=0
 			if [ ! -e "$secret_key_path" ]; then
 				new_grant=1
@@ -1873,7 +1975,12 @@ function ls_secret_revoke { # SECRET USER_EXPR
 	store="$(ls_store)"
 	if [ -z "$store" ]; then return 1; fi
 	local secret="$1"
+	if ! ls_validate_name "$secret"; then
+		ls_log_error "ls_secret_revoke: Invalid secret name: $secret"
+		return 1
+	fi
 	shift
+	ls_log_tip "Revocation removes user key access. Rotate secret if previously accessed keys must be invalidated."
 	local pubkey_path
 	local user
 	local host
@@ -1898,6 +2005,14 @@ function ls_user_deregister { # USER KEY?
 	user="$(ls_user_name "$user_input")"
 	local host
 	host="$(ls_user_host "$user_input")"
+	if ! ls_validate_name "$user"; then
+		ls_log_error "ls_user_deregister: Invalid user name: $user"
+		return 1
+	fi
+	if [[ "$user_input" == *@* ]] && ! ls_validate_name "$host"; then
+		ls_log_error "ls_user_deregister: Invalid host name: $host"
+		return 1
+	fi
 	local key_path
 	local key_paths=()
 	if [[ "$user_input" == *@* ]]; then
@@ -1962,14 +2077,14 @@ function ls_secret_export {
 	else
 		# Default shell script output format
 		if [ $# -eq 0 ]; then
-			local secrets
-			secrets=$(ls_secret_list)
-			if [ -z "$secrets" ]; then
+			local -a secrets=()
+			while IFS= read -r s; do
+				[ -n "$s" ] && secrets+=("$s")
+			done < <(ls_secret_list)
+			if [ ${#secrets[@]} -eq 0 ]; then
 				echo "# No secrets in $(ls_store)"
 			else
-				# We do want to split this and pass it as arguments
-				# shellcheck disable=SC2068
-				ls_secret_export ${secrets[@]}
+				ls_secret_export "${secrets[@]}"
 			fi
 		else
 			local envname
@@ -1979,7 +2094,12 @@ function ls_secret_export {
 				envname="${var%%=*}"
 				secname="${var##*=}"
 				if [ "$envname" == "$secname" ]; then
-					envname="$(echo "${envname//./_}" | tr '[:lower:]' '[:upper:]')"
+					envname="$(echo "${envname//[.-]/_}" | tr '[:lower:]' '[:upper:]')"
+				fi
+
+				if [[ ! "$envname" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+					ls_log_error "export: Invalid environment variable name: $envname"
+					return 1
 				fi
 
 				if ! ls_secret_verify "$secname"; then
@@ -1989,8 +2109,9 @@ function ls_secret_export {
 					ls_log_error "Unable to retrieve secret: $secname"
 					echo "# Unable to retrieve secret: $secname"
 				else
-					# NOTE: Newlines are actually OK
-					echo "export $envname='${secval}'"
+					# Safely escape single quotes for shell evaluation
+					local escaped_val="${secval//\'/\'\\\'\'}"
+					echo "export $envname='${escaped_val}'"
 				fi
 			done
 		fi
@@ -2334,8 +2455,7 @@ function ls_cli {
 				for key in $(ls_secret_keys "$SECRET"); do
 					keys_array+=("$key")
 				done
-				# shellcheck disable=SC2068
-				ls_json_emit_key_array "$SECRET" ${keys_array[@]}
+				ls_json_emit_key_array "$SECRET" "${keys_array[@]}"
 			done
 			echo ""
 			echo "}"
@@ -2385,6 +2505,7 @@ function ls_cli {
 			return 1
 		fi
 		if [ -n "${2:-}" ]; then
+			ls_log_tip "Passing secret values as arguments can leak secrets in process lists. Prefer passing via stdin."
 			# Content provided as argument
 			if ls_secret_add "$1" "$2" "${3:-}" "${4:-}" >/dev/null; then
 				if [ "${LITTLESECRETS_FORMAT:-}" = "json" ]; then
@@ -2692,7 +2813,16 @@ function ls_cli {
 #
 # -----------------------------------------------------------------------------
 
-LS_TRAP_PREVIOUS="$(trap -p EXIT INT TERM | cut -d"'" -f2 | sort | uniq)"
+function ls_trap_extract {
+	local sig="$1"
+	local t
+	t="$(trap -p "$sig" || true)"
+	if [ -n "$t" ]; then
+		sed -E "s/^trap -- '(.*)' [A-Z0-9]+$/\1/" <<<"$t"
+	fi
+}
+
+LS_TRAP_EXIT_PREVIOUS="$(ls_trap_extract EXIT)"
 LS_TRAP_ERROR_PREVIOUS=""
 trap ls_cleanup EXIT INT TERM
 
@@ -2700,7 +2830,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 	ls_cli "$@"
 else
 	# We only register error handling in library mode
-	LS_TRAP_ERROR_PREVIOUS="$(trap -p ERR | cut -d"'" -f2 | sort | uniq)"
+	LS_TRAP_ERROR_PREVIOUS="$(ls_trap_extract ERR)"
 	trap ls_on_error ERR
 fi
 
