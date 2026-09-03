@@ -10,6 +10,7 @@ test-step "Render formatted help"
 HELP_OUTPUT="$(ls_cli help)"
 
 echo "$HELP_OUTPUT" | grep -q '^Usage: littlesecrets \[GLOBAL_OPTION\]\.\.\. COMMAND \[ARGUMENT\]\.\.\.$' || test-fail "help should show usage"
+echo "$HELP_OUTPUT" | grep -q '^Version: 1\.1\.0$' || test-fail "help should show the CLI version"
 echo "$HELP_OUTPUT" | grep -q '^  -h, --help                 Show this help message$' || test-fail "options should be aligned"
 echo "$HELP_OUTPUT" | grep -q "^  --host HOST                Set the host name (default: [\$]HOSTNAME)$" || test-fail "host option should be aligned"
 echo "$HELP_OUTPUT" | grep -q '^Meta:$' || test-fail "help should contain command groups"

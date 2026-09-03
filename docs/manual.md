@@ -1,4 +1,4 @@
-% LITTLESECRETS(1) Version 1.0.1 | LittleSecrets Documentation
+% LITTLESECRETS(1) Version 1.1.0 | LittleSecrets Documentation
 
 # NAME
 

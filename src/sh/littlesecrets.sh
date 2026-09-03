@@ -24,7 +24,7 @@ umask 077
 declare -a LS_CLEANUP=()
 LS_CLEANUP+=("")
 
-LITTLESECRETS_VERSION="1.0.1"
+LITTLESECRETS_VERSION="1.1.0"
 
 # --
 # And define the configuration
@@ -35,6 +35,7 @@ LITTLESECRETS_STORE_NAME=".littlesecrets"
 LITTLESECRETS_STORE=${LITTLESECRETS_STORE:-$LITTLESECRETS_STORE_NAME}
 LITTLESECRETS_KEYSIZE=${LITTLESECRETS_KEYSIZE:-2048} # NOTE: It would be best to do 4096, and we should test keys
 LITTLESECRETS_FORMAT=${LITTLESECRETS_FORMAT:-}
+LITTLESECRETS_FORMAT_VERSION=${LITTLESECRETS_FORMAT_VERSION:-v2}
 LITTLESECRETS_FORCE_ENCODING=${LITTLESECRETS_FORCE_ENCODING:-}
 LITTLESECRETS_SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 # --
@@ -1498,7 +1499,7 @@ function ls_try_write {
 # `SECRET_KEY`. The user will be inferred from the `PUBKEY`, the secret
 # will be created in the storage, along with its hmac signature if not
 # already there.
-function ls_secret_write { # NAME PUBKEY? SECRETKEY?
+function ls_secret_write { # NAME PUBKEY? SECRETKEY? FORMAT_VERSION?
 	local secret_name="$1"
 	if ! ls_validate_name "$secret_name"; then
 		ls_log_error "ls_secret_write: Invalid secret name: $secret_name"
@@ -1510,6 +1511,16 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	secret_hmac_path="$(ls_store)/secret/$secret_name/secret.hmac"
 	local has_hmac
 	has_hmac="$(ls_option hmac)"
+
+	local target_version="${4:-}"
+	if [ -z "$target_version" ]; then
+		if [ -e "$secret_path" ]; then
+			target_version="$(ls_secret_format_version "$secret_name")"
+		else
+			target_version="${LITTLESECRETS_FORMAT_VERSION:-v2}"
+		fi
+	fi
+
 	# This creates the secret key, if it is not given.
 	# NOTE that the key is encoded with ls_encode.
 	local secret_key="${3:-}"
@@ -1520,15 +1531,27 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	local secret_plain
 	secret_plain="$(cat /dev/stdin)"
 	# Encrypt the secret using the symmetric key
-	ls_log_action "ls_secret_write: Writing encrypted secret to $secret_path"
+	ls_log_action "ls_secret_write: Writing encrypted secret to $secret_path ($target_version)"
 	ls_mkparent "$secret_path"
 	local secret_path_tmp
 	secret_path_tmp=$(ls_mkstemp)
-	if ! printf '%s' "$secret_plain" | ls_encrypt_sym "$secret_key" >"$secret_path_tmp"; then
-		ls_log_error "ls_secret_write: symmetric encryption failed at $secret_path"
-		ls_unlink "$secret_path_tmp"
-		unset secret_plain
-		return 1
+	if [ "$target_version" = "v2" ]; then
+		local keys
+		keys="$(ls_secret_derive_keys_v2 "$secret_key")"
+		local enc_key="${keys%%:*}"
+		if ! printf '%s' "$secret_plain" | ls_encrypt_sym "$enc_key" >"$secret_path_tmp"; then
+			ls_log_error "ls_secret_write: symmetric encryption failed at $secret_path"
+			ls_unlink "$secret_path_tmp"
+			unset secret_plain
+			return 1
+		fi
+	else
+		if ! printf '%s' "$secret_plain" | ls_encrypt_sym "$secret_key" >"$secret_path_tmp"; then
+			ls_log_error "ls_secret_write: symmetric encryption failed at $secret_path"
+			ls_unlink "$secret_path_tmp"
+			unset secret_plain
+			return 1
+		fi
 	fi
 	# Atomically write encrypted secret
 	ls_try_write "$secret_path_tmp" "$secret_path" true
@@ -1582,11 +1605,19 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	# If the HMAC option is enabled, we create/update the HMAC
 	if [ -n "$has_hmac" ]; then
 		local hmac
-		if ! hmac=$(printf '%s' "$secret_plain" | ls_secret_hmac - "$secret_key"); then
-			ls_log_error "ls_secret_write: Could not compute HMAC for secret: $secret_name"
-			unset secret_plain
-			return 1
-		elif [ ! -e "$secret_hmac_path" ]; then
+		if [ "$target_version" = "v2" ]; then
+			local keys
+			keys="$(ls_secret_derive_keys_v2 "$secret_key")"
+			local mac_key="${keys#*:}"
+			hmac="$(ls_secret_hmac_v2 "$secret_path" "$mac_key")"
+		else
+			if ! hmac=$(printf '%s' "$secret_plain" | ls_secret_hmac - "$secret_key"); then
+				ls_log_error "ls_secret_write: Could not compute HMAC for secret: $secret_name"
+				unset secret_plain
+				return 1
+			fi
+		fi
+		if [ ! -e "$secret_hmac_path" ]; then
 			ls_log_action "Creating secret HMAC at: $secret_hmac_path"
 			echo -n "$hmac" >"$secret_hmac_path"
 		elif [ "$(cat "$secret_hmac_path")" != "$hmac" ]; then
@@ -1599,11 +1630,11 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY?
 	return $res
 }
 
-function ls_secret_add { # NAME VALUE PUBKEY? ENCKEY?
+function ls_secret_add { # NAME VALUE PUBKEY? ENCKEY? FORMAT_VERSION?
 	if [ -n "${2:-}" ]; then
-		echo -n "$2" | ls_secret_write "$1" "${3:-}" "${4:-}"
+		echo -n "$2" | ls_secret_write "$1" "${3:-}" "${4:-}" "${5:-}"
 	else
-		ls_secret_write "$1" "${3:-}" "${4:-}" </dev/stdin
+		ls_secret_write "$1" "${3:-}" "${4:-}" "${5:-}" </dev/stdin
 	fi
 }
 
@@ -1675,25 +1706,82 @@ function ls_secret_hmac_key {
 function ls_secret_hmac { # SECRET_NAME SECRET_ENC_KEY?
 	local secret_name="$1"
 	local secret_key="${2:-}"
-	# If the secret key is not provided, we try to retrieve it -- note that
-	# this used the current USER/HOST.
+	# If secret_name is '-', calculate HMAC over stdin
+	if [ "$secret_name" == "-" ]; then
+		cat /dev/stdin | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
+		return 0
+	fi
+	# If the secret key is not provided, retrieve it
 	if [ -z "$secret_key" ]; then
-		if ! secret_key="$(ls_secret_key "$1")"; then
+		if ! secret_key="$(ls_secret_key "$secret_name")"; then
 			ls_log_error "ls_secret_hmac: Could not access secret key"
 			return 1
 		fi
 	fi
-	# The ls_secret_hmac_key will derive a key from the secret
-	if [ "$secret_name" == "-" ]; then
-		cat /dev/stdin | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
+	local ver
+	ver="$(ls_secret_format_version "$secret_name")"
+	if [ "$ver" = "v2" ]; then
+		local keys
+		keys="$(ls_secret_derive_keys_v2 "$secret_key")"
+		local mac_key="${keys#*:}"
+		local secret_path
+		secret_path="$(ls_secret_path "$secret_name")/secret.enc"
+		ls_secret_hmac_v2 "$secret_path" "$mac_key"
 	else
-		ls_secret_get "$1" | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
+		ls_secret_get "$secret_name" | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
 	fi
 	return 0
 }
 
 function ls_secret_hmac_path { #SECRET
 	echo "$(ls_secret_path "$1")/secret.hmac"
+}
+
+# Function: ls_secret_format_version SECRET
+# Returns 'v2' if the secret uses v2 Encrypt-then-MAC format, else 'v1'.
+function ls_secret_format_version { # SECRET
+	local secret="$1"
+	local store
+	store="$(ls_store)"
+	if [ -z "$store" ] || ! ls_validate_name "$secret"; then
+		echo "v1"
+		return 0
+	fi
+	local hmac_path="$store/secret/$secret/secret.hmac"
+	if [ ! -e "$hmac_path" ]; then
+		echo "v1"
+		return 0
+	fi
+	local prefix
+	prefix="$(head -c 7 "$hmac_path" 2>/dev/null || true)"
+	if [ "$prefix" = "v2:etm:" ]; then
+		echo "v2"
+	else
+		echo "v1"
+	fi
+}
+
+# Derives 256-bit encryption key and 256-bit authentication key from master key
+function ls_secret_derive_keys_v2 { # MASTER_KEY
+	local master_key="${1:-}"
+	local sha512_hex
+	if [ -z "$master_key" ]; then
+		sha512_hex=$(ls_decode </dev/stdin | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha512 | cut -d' ' -f2)
+	else
+		sha512_hex=$(printf '%s' "$master_key" | ls_decode | "$LITTLESECRETS_OPENSSL_BIN" dgst -sha512 | cut -d' ' -f2)
+	fi
+	# First 32 bytes (64 hex characters) = Encryption Key (K_enc)
+	# Second 32 bytes (64 hex characters) = MAC Key (K_mac)
+	echo "${sha512_hex:0:64}:${sha512_hex:64:64}"
+}
+
+# Computes v2 Encrypt-then-MAC HMAC over ciphertext file
+function ls_secret_hmac_v2 { # SECRET_CIPHERTEXT_PATH MAC_KEY
+	local enc_path="$1"
+	local mac_key="$2"
+	local mac_digest
+	mac_digest=$(ls_hmac "$mac_key" "$enc_path")
+	echo "v2:etm:${mac_digest}"
 }
 
 # Emits the JSON fields for a secret name/value pair.
@@ -1817,28 +1905,62 @@ function ls_secret_get { # NAME PRIVKEY?
 		ls_log_error "ls_secret_get: Could not retrieve secret '$1', decrypted secret key is empty: $secret_key_path"
 		return 1
 	fi
-	# Second step, we decrypt the secret with
-	local secret_val
-	if secret_val="$(ls_decrypt_sym "$secret_key" <"$secret_path")"; then
-		local secret_hmac_path="$store/secret/$secret/secret.hmac"
+	# Second step: check format version and execute dual-engine
+	local ver
+	ver="$(ls_secret_format_version "$secret")"
+	local secret_hmac_path="$store/secret/$secret/secret.hmac"
+
+	if [ "$ver" = "v2" ]; then
+		# Format v2: Encrypt-then-MAC (Verify BEFORE Decrypt)
+		local keys
+		keys="$(ls_secret_derive_keys_v2 "$secret_key")"
+		local enc_key="${keys%%:*}"
+		local mac_key="${keys#*:}"
+
 		if [ -e "$secret_hmac_path" ]; then
-			local calculated_hmac
-			if ! calculated_hmac="$(printf '%s' "$secret_val" | ls_secret_hmac - "$secret_key")"; then
-				ls_log_error "ls_secret_get: Could not compute HMAC for secret: $secret"
-				return 1
-			elif ! cmp -s <(echo -n "$calculated_hmac") "$secret_hmac_path"; then
-				ls_log_error "ls_secret_get: Secret HMAC validation failed for: $secret"
+			local expected_hmac
+			expected_hmac="$(ls_secret_hmac_v2 "$secret_path" "$mac_key")"
+			if ! cmp -s <(echo -n "$expected_hmac") "$secret_hmac_path"; then
+				ls_log_error "ls_secret_get: v2 HMAC verification failed for: $secret"
 				return 1
 			fi
 		elif [ -n "$(ls_option hmac)" ]; then
-			ls_log_warning "ls_secret_get: Missing secret HMAC: $secret_hmac_path"
+			ls_log_error "ls_secret_get: Missing required v2 HMAC for: $secret"
 			return 1
 		fi
-		echo -n "$secret_val"
-		return 0
+
+		# Ciphertext integrity confirmed, now safe to decrypt
+		local secret_val
+		if secret_val="$(ls_decrypt_sym "$enc_key" <"$secret_path")"; then
+			echo -n "$secret_val"
+			return 0
+		else
+			ls_log_error "ls_secret_get: Could not retrieve secret '$1', secret decryption error: $secret_path"
+			return 1
+		fi
 	else
-		ls_log_error "ls_secret_get: Could not retrieve secret '$1', secret decryption error: $secret_path"
-		return 1
+		# Format v1: Legacy decrypt-then-verify
+		local secret_val
+		if secret_val="$(ls_decrypt_sym "$secret_key" <"$secret_path")"; then
+			if [ -e "$secret_hmac_path" ]; then
+				local calculated_hmac
+				if ! calculated_hmac="$(printf '%s' "$secret_val" | ls_secret_hmac - "$secret_key")"; then
+					ls_log_error "ls_secret_get: Could not compute HMAC for secret: $secret"
+					return 1
+				elif ! cmp -s <(echo -n "$calculated_hmac") "$secret_hmac_path"; then
+					ls_log_error "ls_secret_get: Secret HMAC validation failed for: $secret"
+					return 1
+				fi
+			elif [ -n "$(ls_option hmac)" ]; then
+				ls_log_warning "ls_secret_get: Missing secret HMAC: $secret_hmac_path"
+				return 1
+			fi
+			echo -n "$secret_val"
+			return 0
+		else
+			ls_log_error "ls_secret_get: Could not retrieve secret '$1', secret decryption error: $secret_path"
+			return 1
+		fi
 	fi
 }
 
@@ -1993,6 +2115,57 @@ function ls_secret_revoke { # SECRET USER_EXPR
 			rm -f "$secret_key_path"
 		fi
 	done
+}
+
+function ls_secret_upgrade { # SECRET_EXPR...
+	local store
+	store="$(ls_store)"
+	if [ -z "$store" ]; then return 1; fi
+	local -a secrets=()
+	while IFS= read -r s; do
+		[ -n "$s" ] && secrets+=("$s")
+	done < <(ls_secret_list "$@")
+	if [ ${#secrets[@]} -eq 0 ]; then
+		ls_log_message "No secrets found to upgrade"
+		return 0
+	fi
+	local secret
+	local upgraded_count=0
+	for secret in "${secrets[@]}"; do
+		local ver
+		ver="$(ls_secret_format_version "$secret")"
+		if [ "$ver" = "v2" ]; then
+			ls_log_message "Secret '$secret' is already format v2 (Encrypt-then-MAC)"
+			echo "Already v2: $secret"
+			continue
+		fi
+		ls_log_action "Upgrading secret '$secret' to format v2..."
+		local val
+		if ! val="$(ls_secret_get "$secret")"; then
+			ls_log_error "Could not decrypt secret '$secret' for upgrade"
+			return 1
+		fi
+		local user_keys=()
+		for k in "$store/secret/$secret"/*.key; do
+			if [ -e "$k" ]; then
+				user_keys+=("$(basename "$k" .key)")
+			fi
+		done
+		local new_key
+		new_key="$(ls_key)"
+		if ! printf '%s' "$val" | ls_secret_write "$secret" "" "$new_key" "v2" >/dev/null; then
+			ls_log_error "Failed to write v2 secret for '$secret'"
+			return 1
+		fi
+		for u in "${user_keys[@]}"; do
+			ls_secret_grant "$secret" "$u" >/dev/null 2>&1 || true
+		done
+		ls_log_message "Upgraded '$secret' to format v2"
+		echo "Upgraded: $secret (v1 -> v2)"
+		upgraded_count=$((upgraded_count + 1))
+	done
+	ls_log_message "Upgrade complete: $upgraded_count secret(s) upgraded"
+	return 0
 }
 
 function ls_user_deregister { # USER KEY?
@@ -2265,6 +2438,7 @@ function ls_cli_help {
 		return 0
 	fi
 	echo "Usage: littlesecrets [GLOBAL_OPTION]... COMMAND [ARGUMENT]..."
+	echo "Version: $LITTLESECRETS_VERSION"
 	echo ""
 	echo "Arguments: <NAME> required, [NAME] optional, <NAME>... one or more, [NAME...] zero or more"
 	echo "Expressions ending in _EXPR are shell globs; quote them to prevent shell expansion."
@@ -2283,6 +2457,8 @@ function ls_cli_help {
 	printf '  %-25s  %s\n' '-f, --format FORMAT' 'Set output format: text or json'
 	printf '  %-25s  %s\n' '--binary' 'Use base64 for binary values in JSON output'
 	printf '  %-25s  %s\n' '--text' 'Force text values in JSON output'
+	printf '  %-25s  %s\n' '--v1' 'Use legacy format v1 (plaintext HMAC)'
+	printf '  %-25s  %s\n' '--v2' 'Use modern format v2 (Encrypt-then-MAC, default)'
 	echo ""
 	grep '^[[:space:]]## [^:]*:' "$LITTLESECRETS_SCRIPT_PATH" |
 		sed -E 's/^[[:space:]]## ([^:]+): /\1\t/' |
@@ -2366,6 +2542,14 @@ function ls_cli {
 			# Force treat values as text (never base64) even if detection says binary
 			LITTLESECRETS_FORCE_ENCODING="text"
 			text_requested=1
+			shift
+			;;
+		--v1)
+			LITTLESECRETS_FORMAT_VERSION="v1"
+			shift
+			;;
+		--v2)
+			LITTLESECRETS_FORMAT_VERSION="v2"
 			shift
 			;;
 		-fjson)
@@ -2603,6 +2787,11 @@ function ls_cli {
 			return 1
 		fi
 		ls_secret_remove "$1"
+		return $?
+		;;
+	## Secrets: upgrade [SECRET_EXPR...]  Upgrade v1 secrets to v2 (Encrypt-then-MAC)
+	"upgrade")
+		ls_secret_upgrade "$@"
 		return $?
 		;;
 	## Access: grant <SECRET_EXPR> <USER_EXPR...>  Grant matching users access
