@@ -12,7 +12,7 @@ The store is expected to store data in hierarchical fashion, following this stru
 secret/                        # Stores the secrets
   <name>/
     secret.enc                 # Secret, encrypted with its key
-    secret.hmac                # HMAC of secret and encryption key
+    secret.hmac                # v1 plaintext HMAC or v2 ciphertext EtM tag
     <user>@<host>.key          # Encrypted secret key for a user and host
 
 user/                          # Stores the users

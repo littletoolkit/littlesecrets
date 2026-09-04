@@ -105,8 +105,8 @@ function ls_secret_format_version { # SECRET_NAME
   2. Verifies `secret.hmac` against decrypted plaintext.
 
 ### 4.2 Write Configuration
-- Environment variable: `LITTLESECRETS_DEFAULT_FORMAT=v1|v2` (default: `v2`).
-- CLI Flag: `littlesecrets add --v1 <secret>` or `littlesecrets add --v2 <secret>`.
+- Environment variable: `LITTLESECRETS_FORMAT_VERSION=v1|v2` (default: `v2`).
+- CLI Flag: `littlesecrets --v1 add <secret>` or `littlesecrets --v2 add <secret>`.
 
 ### 4.3 Migration / Upgrade Command
 A new CLI command `littlesecrets upgrade [SECRET_EXPR...]`:
@@ -117,7 +117,7 @@ A new CLI command `littlesecrets upgrade [SECRET_EXPR...]`:
    - Generates a fresh 32-byte symmetric key.
    - Encrypts via v2 Encrypt-then-MAC.
    - Re-encrypts user recipient keys for all authorized users.
-   - Updates `secret.enc` and `secret.hmac` atomically.
+   - Rewrites `secret.enc`, recipient key files, and `secret.hmac`.
    - Reports `Upgraded: <secret> (v1 -> v2)`.
 
 ---

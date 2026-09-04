@@ -23,8 +23,10 @@ LittleSecrets is a secure secrets management tool designed for individual and te
 
 **Strong Encryption**
 : Uses industry-standard cryptography:
-- Secrets are encrypted with AES-256-CBC using random keys
-- Each secret's encryption key is then encrypted with RSA (default 2048-bit, configurable to 4096-bit using each authorized user's public key)
+- Secrets use AES-256-CBC with PBKDF2 and a random key
+- New secrets use Encrypt-then-MAC with HMAC-SHA256 over the ciphertext (format v2)
+- Legacy format v1 secrets remain readable and can be migrated with `upgrade`
+- Each secret's encryption key is then encrypted with RSA-OAEP using each authorized user's public key
 - Supports both OpenSSH and OpenSSL key formats
 - No shared passwords or master keys required
 
@@ -64,6 +66,9 @@ The system is designed to be git-friendly, allowing teams to safely store encryp
 
 **--binary**, **--text**
 : In JSON mode, force binary values to base64 or force values to text. These options cannot be combined.
+
+**--v1**, **--v2**
+: Select the format for newly created secrets. Existing secrets retain their format; v2 is the default.
 
 Commands write data only to stdout. Diagnostics, warnings, and progress output
 are written to stderr. Routine operation details are hidden by default and can
@@ -120,7 +125,10 @@ of that user's hosts.
 : Create or update HMACs for matching secrets. With no expression, process all secrets.
 
 **verify** [*SECRET_EXPR*...]
-: Verify HMACs without modifying secrets. Missing or invalid HMACs fail.
+: Verify HMACs. Missing HMACs are created when the secret can be accessed; invalid HMACs fail.
+
+**upgrade** [*SECRET_EXPR*...]
+: Migrate matching v1 secrets to format v2. Existing v2 secrets are left unchanged.
 
 **export** [*VAR=SECRET...]
 : Output shell assignments. With no arguments, export all secrets.
@@ -156,6 +164,12 @@ of that user's hosts.
 
 **LITTLESECRETS_OPTIONS**
 : Comma-separated list of options (default: hmac)
+
+**LITTLESECRETS_FORMAT_VERSION**
+: Format used for newly written secrets: `v1` or `v2` (default: `v2`)
+
+**LITTLESECRETS_KEYSIZE**
+: RSA key size used to determine the maximum wrapped secret-key size (default: `2048`)
 
 **LITTLESECRETS_OPENSSL_BIN**
 : Path to the OpenSSL binary (default: openssl). This variable is validated at startup and made readonly to prevent tampering. The path must point to an executable file and cannot contain shell metacharacters. For security, use absolute paths when possible.
@@ -267,11 +281,11 @@ littlesecrets info
 
 # BUGS
 
-Report bugs at: https://github.com/yourusername/littlesecrets/issues
+Report bugs at: https://github.com/littletoolkit/littlesecrets/issues
 
 # COPYRIGHT
 
-Copyright © 2025 LittleWorkshop LLC. License MIT.
+Copyright (c) 2025 LittleWorkshop Ltd. License BSD 3-Clause.
 
 # SEE ALSO
 

@@ -8,8 +8,9 @@ The core cryptography works as such:
 - The user can grant other user's access to the secret by decrypting the secret's encryption key,
   and encrypting it with the other user's SSH public key.
 - A secret can be revoked by removing the encrypted secret, or re-encrypting it.
-- A secret can have an associated HMAC signature using the decrypted secret as the
-  message and the secret encryption key in base64 as the key. This ensures integrity.
+- Format v1 uses an HMAC over the decrypted secret for integrity.
+- Format v2 derives independent encryption and authentication keys and uses
+  Encrypt-then-MAC: HMAC-SHA256 covers the ciphertext before decryption.
 
 Note that:
 
@@ -29,10 +30,10 @@ In practice:
 
 Some considerations of this system:
 
-- AES-256-CBC is used alongside HMAC in place of AES-256-GCM as the GCM version
-  is not widely available using the `openssl` CLI, and we want to minimize dependencies.
-- HMAC uses the encryption key in base64 format primarily due to shell implementation
-  limitations, this has no effect on entropy.
+- AES-256-CBC is combined with HMAC using Encrypt-then-MAC in format v2 because
+  the GCM version is not available through the portable `openssl` CLI.
+- Format v1 uses the encryption key in base64 format for HMAC primarily due to
+  shell implementation limitations; this has no effect on entropy.
 - Secrets and key storage should be version controlled using a system like git, which
   then provides auditability.
 
@@ -79,8 +80,10 @@ openssl pkeyutl -encrypt -pubin -inkey "$PUBLIC_KEY_PATH" -in "$SECRET_ENC_KEY_P
 openssl pkeyutl -decrypt -inkey "$PRIVATE_KEY_PATH" -in "$SECRET_ENC_KEY_PATH" -out /dev/stdout
 ```
 
-The HMAC integrity validation works using the decrypted *secret* and the
-*secret encryption key*, both are binary data.
+Legacy v1 HMAC calculation uses the following key handling. For format v1,
+HMAC integrity validation works using the decrypted *secret* and
+the *secret encryption key*. Format v2 instead authenticates the encrypted
+`secret.enc` file with a derived authentication key before decryption.
 
 ```
 # Computes a base64 version of the encryption key so that it can be HMAC'ed

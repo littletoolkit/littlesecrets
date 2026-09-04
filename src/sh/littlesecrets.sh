@@ -19,6 +19,73 @@ set -euo pipefail
 shopt -s extglob
 umask 077
 
+# -----------------------------------------------------------------------------
+#
+# PORTABLE PATH UTILITIES
+#
+# -----------------------------------------------------------------------------
+
+# Function: ls_realpath PATH
+# Portable canonical path resolution. Prefers `realpath -m` (GNU) but falls
+# back to cd/pwd -P and symlink resolution for macOS/BSD, tolerating a missing
+# final path component. Defined before the configuration block because the
+# script path is resolved with it at load time.
+function ls_realpath { # PATH
+	local path="${1:-}"
+	[ -n "$path" ] || return 1
+	# Prefer GNU `realpath -m`, which also resolves a missing final component.
+	local resolved
+	if resolved="$(realpath -m -- "$path" 2>/dev/null)"; then
+		printf '%s\n' "$resolved"
+		return 0
+	fi
+	# Resolve inside a subshell so `set -f` cannot leak into the caller.
+	(
+		local head tail canon out comp
+		# Make absolute so relative inputs resolve against the current directory.
+		case "$path" in
+		/*) ;;
+		*) path="$PWD/$path" ;;
+		esac
+		# Split into the deepest existing directory prefix and any trailing
+		# components (files or missing paths), like `realpath -m`.
+		head="$path"
+		tail=""
+		while [ ! -d "$head" ] && [ "$head" != "/" ]; do
+			tail="${head##*/}${tail:+/$tail}"
+			head="${head%/*}"
+			[ -n "$head" ] || head="/"
+		done
+		if ! canon="$(cd "$head" 2>/dev/null && pwd -P)"; then
+			exit 1
+		fi
+		resolved="$canon${tail:+/$tail}"
+		# Follow a symlinked final component (GNU realpath resolves these too).
+		local link_target
+		local link_guard=0
+		while [ -L "$resolved" ] && [ "$link_guard" -lt 40 ]; do
+			link_target="$(readlink "$resolved" 2>/dev/null)" || break
+			case "$link_target" in
+			/*) resolved="$link_target" ;;
+			*) resolved="$(dirname "$resolved")/$link_target" ;;
+			esac
+			link_guard=$((link_guard + 1))
+		done
+		# Normalize any remaining `.`/`..` lexically.
+		out=""
+		local IFS='/'
+		set -f
+		for comp in $resolved; do
+			case "$comp" in
+			'' | '.') ;;
+			'..') out="${out%/*}" ;;
+			*) out="$out/$comp" ;;
+			esac
+		done
+		printf '%s\n' "${out:-/}"
+	)
+}
+
 # --
 # We define the main internal variables
 declare -a LS_CLEANUP=()
@@ -37,7 +104,11 @@ LITTLESECRETS_KEYSIZE=${LITTLESECRETS_KEYSIZE:-2048} # NOTE: It would be best to
 LITTLESECRETS_FORMAT=${LITTLESECRETS_FORMAT:-}
 LITTLESECRETS_FORMAT_VERSION=${LITTLESECRETS_FORMAT_VERSION:-v2}
 LITTLESECRETS_FORCE_ENCODING=${LITTLESECRETS_FORCE_ENCODING:-}
-LITTLESECRETS_SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+# Resolve the script path; ls_realpath falls back to a portable implementation
+# when GNU `realpath` is unavailable (macOS/BSD), and the final fallback keeps
+# the raw BASH_SOURCE path if even that fails.
+LITTLESECRETS_SCRIPT_PATH="$(ls_realpath "${BASH_SOURCE[0]}")" ||
+	LITTLESECRETS_SCRIPT_PATH="${BASH_SOURCE[0]}"
 # --
 # Validate and secure the OpenSSL binary path
 function ls_validate_openssl_bin {
@@ -270,13 +341,95 @@ function ls_on_error {
 #
 # -----------------------------------------------------------------------------
 
+# Function: ls_path_age PATH
+# Emits the age in seconds of PATH's last modification, or nothing when it
+# cannot be determined. Tries the GNU then the BSD `stat` interfaces.
+function ls_path_age { # PATH
+	local path="${1:-}"
+	local mtime now
+	[ -e "$path" ] || return 1
+	if mtime="$(stat -c %Y -- "$path" 2>/dev/null)" ||
+		mtime="$(stat -f %m "$path" 2>/dev/null)"; then
+		now="$(date +%s)"
+		[ "$mtime" -le "$now" ] || return 1
+		printf '%s\n' "$((now - mtime))"
+		return 0
+	fi
+	return 1
+}
+
+# Function: ls_lock_acquire LOCKDIR [TIMEOUT]
+# Portable, atomic inter-process lock built on `mkdir` (no `flock`, which is
+# absent on macOS/BSD). A lock is reclaimed when its recorded holder PID is
+# gone, or once it has outlived any plausible holder (which also covers PID
+# reuse). Locks younger than LS_LOCK_GRACE_SECONDS are never touched, so a
+# freshly created lock cannot be stolen by an already-waiting process.
+# Registers LOCKDIR for cleanup on exit. Returns non-zero on timeout.
+function ls_lock_acquire { # LOCKDIR [TIMEOUT_SECONDS]
+	local lock_dir="${1:-}"
+	local timeout="${2:-${LS_LOCK_TIMEOUT:-300}}"
+	local grace="${LS_LOCK_GRACE_SECONDS:-10}"
+	local max_age="${LS_LOCK_MAX_SECONDS:-900}"
+	local waited=0
+	local holder_pid="" age=""
+	[ -n "$lock_dir" ] || return 1
+	while true; do
+		if mkdir "$lock_dir" 2>/dev/null; then
+			printf '%s\n' "$$" >"$lock_dir/pid" 2>/dev/null || true
+			LS_CLEANUP+=("$lock_dir")
+			return 0
+		fi
+		holder_pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+		# A malformed PID is treated like an unreadable holder.
+		case "$holder_pid" in
+		'' | *[!0-9]*) holder_pid="" ;;
+		esac
+		age="$(ls_path_age "$lock_dir" 2>/dev/null || true)"
+		if [ -n "$age" ]; then
+			# Holder PID never made it to disk, or is stale: wait out the
+			# grace window before taking over.
+			if [ -z "$holder_pid" ] && [ "$age" -ge "$grace" ]; then
+				rm -rf "$lock_dir"
+				continue
+			fi
+			# Holder PID is gone, or the lock outlived any plausible holder.
+			if [ -n "$holder_pid" ] && ! kill -0 "$holder_pid" 2>/dev/null; then
+				rm -rf "$lock_dir"
+				continue
+			fi
+			if [ "$age" -ge "$max_age" ]; then
+				rm -rf "$lock_dir"
+				continue
+			fi
+		elif [ -n "$holder_pid" ] && ! kill -0 "$holder_pid" 2>/dev/null; then
+			# No mtime support, but the holder is provably gone.
+			rm -rf "$lock_dir"
+			continue
+		fi
+		if [ "$waited" -ge "$timeout" ]; then
+			return 1
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+}
+
+# Function: ls_lock_release LOCKDIR
+# Releases a lock acquired with ls_lock_acquire.
+function ls_lock_release { # LOCKDIR
+	local lock_dir="${1:-}"
+	[ -n "$lock_dir" ] || return 0
+	rm -f "$lock_dir/pid" 2>/dev/null || true
+	rmdir "$lock_dir" 2>/dev/null || rm -rf "$lock_dir" 2>/dev/null || true
+}
+
 # --
 # Secure creation of a file that will be cleaned up, OK to store secrets
 # and keys.
 function ls_mkstemp {
 	local res
 	# Ensures we write in a directory not accessible to other users
-	res="$(mktemp -p "${TMPDIR:-/tmp}")"
+	res="$(mktemp "${TMPDIR:-/tmp}/littlesecrets.XXXXXX")"
 	chmod 600 "$res"
 	LS_CLEANUP+=("$res")
 	# If there's a second argument, that's going to be the contents, previously
@@ -370,6 +523,9 @@ function ls_cleanup {
 		if [ -z "$path" ]; then
 			# nothing
 			path=
+		elif [ -d "$path" ]; then
+			# Lock directories (mkdir-based locks) are cleaned recursively.
+			rm -rf "$path"
 		elif [ -e "$path" ]; then
 			unlink "$path"
 		fi
@@ -612,20 +768,18 @@ function ls_ssh_keypair_ensure { # KEYPATH
 		ls_log_error "SSH private key path is invalid"
 		return 1
 	fi
-	privkey_path="$(realpath -m -- "$privkey_path")"
+	privkey_path="$(ls_realpath "$privkey_path")"
 	ls_mkparent "$privkey_path"
 	local lock_path
-	lock_path="${privkey_path}.littlesecrets.lock"
-	local lock_fd
+	lock_path="${privkey_path}.littlesecrets.lock.d"
 	# The source key and its derived files are shared by concurrent CLI processes.
-	# Hold one per-source-key lock across their complete initialization.
-	if ! exec {lock_fd}>"$lock_path"; then
-		ls_log_error "Could not create SSH key lock: $lock_path"
-		return 1
-	fi
-	if ! flock -x "$lock_fd"; then
-		ls_log_error "Could not acquire SSH key lock: $lock_path"
-		exec {lock_fd}>&-
+	# Hold one per-source-key lock across their complete initialization. `mkdir`
+	# is atomic on POSIX filesystems and, unlike `flock`, is available on macOS.
+	# NOTE: pre-portability releases used `${privkey_path}.littlesecrets.lock`
+	# as an flock target; the two schemes do not exclude each other, so avoid
+	# running this version concurrently with an old one on the same key.
+	if ! ls_lock_acquire "$lock_path"; then
+		ls_log_error "Could not acquire SSH key lock (timeout): $lock_path"
 		return 1
 	fi
 	# Ensures private key exists, otherwise creates it
@@ -638,14 +792,13 @@ function ls_ssh_keypair_ensure { # KEYPATH
 	fi
 	if ! ssh-keygen -y -P "" -f "$privkey_path" >/dev/null 2>&1; then
 		ls_log_error "SSH private key with passphrase are not supported: $privkey_path"
-		flock -u "$lock_fd"
-		exec {lock_fd}>&-
+		ls_lock_release "$lock_path"
 		return 1
 	fi
 	local key_id
 	key_id=$("$LITTLESECRETS_OPENSSL_BIN" dgst -sha256 "$privkey_path" | cut -d' ' -f2 | cut -c1-16)
 	local privkey_parent
-	privkey_parent=$(dirname -- "$(realpath -- "$privkey_path")")
+	privkey_parent="$(dirname "$privkey_path")"
 	local privkey_pem_path="${privkey_parent}/littlesecrets-${key_id}.pem"
 	local pubkey_pem_path="${privkey_parent}/littlesecrets-${key_id}.pem.pub"
 	# Ensures PEM private key exists, and is up to date
@@ -682,12 +835,10 @@ function ls_ssh_keypair_ensure { # KEYPATH
 	fi
 	if [ ! -e "$privkey_pem_path" ] || [ ! -e "$pubkey_pem_path" ]; then
 		ls_log_error "Could not create PEM keypair from SSH keypair: $privkey_path"
-		flock -u "$lock_fd"
-		exec {lock_fd}>&-
+		ls_lock_release "$lock_path"
 		return 1
 	fi
-	flock -u "$lock_fd"
-	exec {lock_fd}>&-
+	ls_lock_release "$lock_path"
 	echo "${privkey_pem_path}"
 }
 
@@ -1177,7 +1328,7 @@ function ls_store_init {
 	if [ ! -e "$parent/$LITTLESECRETS_STORE_NAME" ]; then
 		mkdir -p "$parent/$LITTLESECRETS_STORE_NAME"
 	fi
-	realpath "$parent/$LITTLESECRETS_STORE_NAME"
+	ls_realpath "$parent/$LITTLESECRETS_STORE_NAME"
 }
 
 # --
@@ -2001,7 +2152,7 @@ function ls_secret_remove {
 	fi
 	local secret_path="$store/secret/$secret"
 	if [ -e "$secret_path" ]; then
-		ls_log_action "Removing secret files: $(env -C "$secret_path" find . -name "*.*")"
+		ls_log_action "Removing secret files: $(cd "$secret_path" && find . -name "*.*")"
 		rm -rf "$secret_path"
 	fi
 }
@@ -2332,7 +2483,7 @@ function ls_info {
 
 	# Get absolute path to store
 	local abs_path
-	abs_path="$(realpath "$store")"
+	abs_path="$(ls_realpath "$store")"
 
 	# Get unique users (extract username before colon)
 	local users
@@ -2346,8 +2497,8 @@ function ls_info {
 	local repositories=""
 	local repository
 	for repository in $(ls_store_list); do
-		if [ "$(realpath "$repository")" != "$abs_path" ]; then
-			repositories+="$(realpath "$repository") "
+		if [ "$(ls_realpath "$repository")" != "$abs_path" ]; then
+			repositories+="$(ls_realpath "$repository") "
 		fi
 	done
 	repositories="${repositories% }"
@@ -2409,7 +2560,7 @@ function ls_secret_find {
 			fi
 			secret_name="$(basename "$(dirname "$secret_path")")"
 			if ls_match "$secret_name" "$pattern" >/dev/null; then
-				printf '%s: %s\n' "$secret_name" "$(realpath "$repository")"
+				printf '%s: %s\n' "$secret_name" "$(ls_realpath "$repository")"
 				found=1
 			fi
 		done

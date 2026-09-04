@@ -10,16 +10,16 @@
 
 *LittleSecrets* is secret sharing tool that can be used for
 distributing secrets across machines and users, while safely storing the
-secrets in local filesystems, Git repostories, archives or any unencrypted
-strorage.
+secrets in local filesystems, Git repositories, and archives.
 
 LittleSecrets' design is based on the *Secure and convenient secret management
-in distributed computer systems* paper by Blazej Adamczyk, and relies primarily
-on RSA keypairs and AES-256-CBC with PBKDF2 for encryption.
+in distributed computer systems* paper by Blazej Adamczyk. It uses RSA-OAEP
+key wrapping and AES-256-CBC with PBKDF2; new secrets use format v2's
+Encrypt-then-MAC construction with HMAC-SHA256.
 
 ## Quick Start
 
-Global options (excerpt): `-k|--key`, `-u|--user`, `--host`, `-s|--store`, `-fjson|--format=json|-f json`, `--binary`, `--text`, `-q|--quiet`, `--verbose`, `--debug`.
+Global options (excerpt): `-k|--key`, `-u|--user`, `--host`, `-s|--store`, `-fjson|--format=json|-f json`, `--binary`, `--text`, `--v1`, `--v2`, `-q|--quiet`, `--verbose`, `--debug`.
 
 - `--binary` forces base64 encoding of secret values in JSON output (adds `encoding` field)
 - `--text` forces plain text emission of secret values in JSON output (suppresses `encoding` field)
@@ -45,7 +45,7 @@ and then
 littlesecrets init
 
 # Add a secret
-echo -n "SECRET!" | littlesecret add my.little.secret
+echo -n "SECRET!" | littlesecrets add my.little.secret
 
 # Retrieve the secret
 littlesecrets get my.little.secret
@@ -93,8 +93,8 @@ work for you, then its simplicity and ease of use should make it attractive.
 
 - *Revocation mechanisms*: secrets can be revoked and rotated.
 
-- *Strong Encryption*: symmetric encryption is AES-256-CBC with PBKDF2,
-  authentication using HMAC.
+- *Strong Encryption*: symmetric encryption is AES-256-CBC with PBKDF2 and
+  format v2 authenticates ciphertext using Encrypt-then-MAC with HMAC-SHA256.
 
 - *Stateless Design*: no service or authentication is required, we rely on the
    cryptographic properties of keys.

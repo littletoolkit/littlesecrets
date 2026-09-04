@@ -1,4 +1,8 @@
-# Binary Data
+# Planned Binary Input
+
+This is a design proposal and is not implemented. The current `--binary` flag
+controls base64 encoding of binary values in JSON output; it does not enable
+binary input for `add`.
 
 `littlesecrets` should support binary data using the `--binary` flag.
 

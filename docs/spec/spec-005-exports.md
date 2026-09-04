@@ -1,4 +1,9 @@
-# Secrets Exports
+# Planned Secrets Exports
+
+This document describes planned export backends, not the current CLI. The
+implemented `export` command emits shell assignments by default or JSON with
+`--format=json`; archive, SQLite, AWS, and DynamoDB exports are not currently
+implemented.
 
 Exporting secrets is meant to only support a read-only use case. In that regards, only the
 `.littlesecrets/secret/` folder is necessary. Additionally, exporting can be limited to only

@@ -18,7 +18,8 @@ The tool exposes the following CLI. `<NAME>` is required, `[NAME]` is optional,
 - `deregister USER[@HOST] [PUBLIC_KEY]` removes registered public keys.
 - `users [USER_EXPR...]` lists registered users and hosts.
 - `hash [SECRET_EXPR...]` creates or updates HMACs; no expression means all secrets.
-- `verify [SECRET_EXPR...]` verifies HMACs without modifying secrets; missing or invalid HMACs fail.
+- `verify [SECRET_EXPR...]` verifies HMACs; an accessible secret without an HMAC receives one, while invalid HMACs fail.
+- `upgrade [SECRET_EXPR...]` migrates matching v1 secrets to v2 and skips secrets already using v2.
 - `export [VAR=SECRET...]` outputs shell assignments; no arguments means all secrets.
 - `find SECRET_EXPR` searches every ancestor store and prints `SECRET: STORE_PATH`.
 - `info` shows the active store and other ancestor stores.
@@ -41,12 +42,14 @@ combined:
 - `-u|--user` set the user name (defaults to `$USER`)
 - `--host` set the host name (defaults to `$HOSTNAME`)
 - `-s|--store` set the path (or relative name) of the secrets store (defaults to `.littlesecrets`)
-- `-fjson | --format=json | -f json` switch output to JSON (supported by: `list`, `users`, `access`, `add`, `set`, `get`, `ensure`, `export`)
+- `-fjson | --format=json | -f json` switch output to JSON (supported by: `list`, `users`, `access`, `add`, `set`, `get`, `ensure`, `export`, `info`)
 - `--binary` (JSON mode) force base64 output for values (adds `"encoding":"base64"` even for textual secrets)
 - `--text` (JSON mode) force plain text output for values (suppresses `encoding` even for binary secrets)
 - `-q|--quiet` suppress warnings and routine diagnostics (errors are still reported)
 - `--verbose` show routine operation details and progress on stderr
 - `--debug` show diagnostic details and error stack traces on stderr
+- `--v1` write newly created secrets using legacy format v1
+- `--v2` write newly created secrets using format v2 (the default)
 
 Output conventions:
 
@@ -59,8 +62,11 @@ Output conventions:
 The tool uses the following environment variables:
 
 - `LITTLESECRETS_USER` name of the user, defaults to `$USER`
+- `LITTLESECRETS_HOST` name of the host, defaults to `$HOSTNAME`
 - `LITTLESECRETS_KEY` path to the user's SSH private key, defaults to `$HOME/.ssh/id_rsa`
 - `LITTLESECRETS_STORE` defaults to the name or path of the store, defaults to `.littlesecrets`
+- `LITTLESECRETS_FORMAT_VERSION` format for new secrets, `v1` or `v2`, defaults to `v2`
+- `LITTLESECRETS_KEYSIZE` RSA key size used for wrapped-key sizing, defaults to `2048`
 - `LITTLESECRETS_OPENSSL_BIN` path to the OpenSSL binary, defaults to `openssl`. This is validated at startup (must be executable, cannot contain shell metacharacters) and made readonly to prevent tampering.
 - `LITTLESECRETS_LOG_FILTER` optional space-separated log categories for library callers. The default category is `warning`.
 
