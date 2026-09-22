@@ -31,6 +31,13 @@ test-step "Verify HMAC is valid"
 EXPECTED_HMAC1=$(ls_secret_hmac test.secret)
 test-expect "$HMAC1" "$EXPECTED_HMAC1" "HMAC matches expected value"
 
+test-step "Recreate missing HMAC during verification"
+rm .littlesecrets/secret/test.secret/secret.hmac
+EXPORTED_SECRET="$(ls_secret_export test.secret)"
+test-substring "$EXPORTED_SECRET" "export TEST_SECRET='${SECRET1}'" || test-fail "Could not export secret with missing HMAC"
+test-exist .littlesecrets/secret/test.secret/secret.hmac
+test-expect "$(cat .littlesecrets/secret/test.secret/secret.hmac)" "$EXPECTED_HMAC1" "Recreated HMAC matches expected value"
+
 test-step "Update secret with new content"
 echo -n "$SECRET2" | ls_secret_write test.secret || test-fail "Could not update secret"
 

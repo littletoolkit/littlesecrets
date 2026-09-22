@@ -1217,19 +1217,30 @@ function ls_decrypt_sym { # KEY
 	output_path=$(ls_mkstemp)
 	local pass_path
 	pass_path=$(ls_mkstemp)
+	local legacy_pass_path=
 	# Read input first
 	cat >"$input_path"
 	ls_bin2hex <"$key_path" >"$pass_path"
 	exec 3<"$pass_path"
-	if ! "$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3 2> >(ls_log_external); then
-		res=1
-		ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$res]"
+	if ! "$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3 2>/dev/null; then
+		exec 3<&-
+		# Legacy stores used the raw key bytes as the passphrase rather than
+		# their hexadecimal representation.
+		legacy_pass_path=$(ls_mkstemp)
+		cat "$key_path" >"$legacy_pass_path"
+		exec 3<"$legacy_pass_path"
+		if ! "$LITTLESECRETS_OPENSSL_BIN" aes-256-cbc -md sha512 -salt -pbkdf2 -d -in "$input_path" -out "$output_path" -pass fd:3 2> >(ls_log_external); then
+			res=1
+			ls_log_error "ls_decrypt_sym: Could not symmetrically decrypt secret [$res]"
+		else
+			cat "$output_path"
+		fi
 	else
 		cat "$output_path"
 	fi
 	exec 3<&-
 	ls_log_output_end
-	ls_unlink "$key_path" "$input_path" "$output_path" "$pass_path"
+	ls_unlink "$key_path" "$input_path" "$output_path" "$pass_path" "$legacy_pass_path"
 	return "$res"
 }
 
@@ -1277,7 +1288,15 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	local secret_path="${2:-/dev/stdin}"
 	local privkey_path=
 	local privkey_temp=0
+	local input_temp=0
 	local res=0
+	if [ "$secret_path" = "/dev/stdin" ]; then
+		local input_path
+		input_path="$(ls_mkstemp)"
+		cat >"$input_path"
+		secret_path="$input_path"
+		input_temp=1
+	fi
 	if [ -z "$privkey" ]; then
 		privkey_path="$(ls_privkey_path)"
 	elif [ -e "$privkey" ]; then
@@ -1289,14 +1308,23 @@ function ls_decrypt_asym { # PRIVKEY? PATH?
 	ls_log_output_start
 	local output_path
 	output_path=$(ls_mkstemp)
-	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 2> >(ls_log_external); then
-		ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$?]"
-		res=1
+	# New stores use OAEP-SHA256. Retry with the legacy PKCS#1 v1.5
+	# padding used by older stores when OAEP decryption fails.
+	if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 2>/dev/null; then
+		if ! "$LITTLESECRETS_OPENSSL_BIN" pkeyutl -decrypt -inkey "$privkey_path" -in "$secret_path" -out "$output_path" -pkeyopt rsa_padding_mode:pkcs1 2> >(ls_log_external); then
+			res=1
+			ls_log_error "ls_decrypt_asym: Could not asymmetrically decrypt secret [$res]"
+		else
+			cat "$output_path"
+		fi
 	else
 		cat "$output_path"
 	fi
 	ls_log_output_end
 	unlink "$output_path"
+	if [ "$input_temp" == 1 ]; then
+		unlink "$secret_path"
+	fi
 	if [ "$privkey_temp" == 1 ]; then
 		unlink "$privkey_path"
 	fi
@@ -1770,10 +1798,10 @@ function ls_secret_write { # NAME PUBKEY? SECRETKEY? FORMAT_VERSION?
 		fi
 		if [ ! -e "$secret_hmac_path" ]; then
 			ls_log_action "Creating secret HMAC at: $secret_hmac_path"
-			echo -n "$hmac" >"$secret_hmac_path"
+			ls_secret_hmac_store "$secret_hmac_path" "$hmac"
 		elif [ "$(cat "$secret_hmac_path")" != "$hmac" ]; then
 			ls_log_action "Updating secret HMAC at: $secret_hmac_path"
-			echo -n "$hmac" >"$secret_hmac_path"
+			ls_secret_hmac_store "$secret_hmac_path" "$hmac"
 		fi
 	fi
 	unset secret_plain
@@ -1851,6 +1879,46 @@ function ls_secret_hmac_key {
 	fi
 }
 
+# Function: ls_secret_hmac_mode SECRET SECRET_KEY
+# Returns the storage format version (`v1` or `v2`) to use when computing a
+# signature. Unlike `ls_secret_format_version`, this also works when the HMAC
+# file is missing, by probing whether the v2 derived encryption key decrypts
+# the ciphertext.
+function ls_secret_hmac_mode { # SECRET SECRET_KEY
+	local secret="$1"
+	local secret_key="$2"
+	local secret_hmac_path
+	secret_hmac_path="$(ls_secret_hmac_path "$secret")"
+	if [ -e "$secret_hmac_path" ]; then
+		ls_secret_format_version "$secret"
+		return 0
+	fi
+	local secret_path
+	secret_path="$(ls_secret_path "$secret")/secret.enc"
+	local keys
+	keys="$(ls_secret_derive_keys_v2 "$secret_key")"
+	local enc_key="${keys%%:*}"
+	if ls_decrypt_sym "$enc_key" <"$secret_path" >/dev/null 2>/dev/null; then
+		echo "v2"
+	else
+		echo "v1"
+	fi
+}
+
+# Function: ls_secret_hmac_store PATH HMAC
+# Atomically writes an HMAC signature to `PATH` with restrictive permissions.
+function ls_secret_hmac_store { # PATH HMAC
+	local path="$1"
+	local hmac="$2"
+	local tmp
+	tmp="$(ls_mkstemp)"
+	if ! printf '%s' "$hmac" >"$tmp"; then
+		ls_unlink "$tmp"
+		return 1
+	fi
+	ls_try_write "$tmp" "$path" true
+}
+
 # Function: ls_secret_hmac
 # Calculates the HMAC for the given secret. If secret name is `-` then
 # the secret is read from stdin.
@@ -1869,17 +1937,50 @@ function ls_secret_hmac { # SECRET_NAME SECRET_ENC_KEY?
 			return 1
 		fi
 	fi
+	local secret_path
+	secret_path="$(ls_secret_path "$secret_name")/secret.enc"
 	local ver
-	ver="$(ls_secret_format_version "$secret_name")"
+	ver="$(ls_secret_hmac_mode "$secret_name" "$secret_key")"
 	if [ "$ver" = "v2" ]; then
 		local keys
 		keys="$(ls_secret_derive_keys_v2 "$secret_key")"
 		local mac_key="${keys#*:}"
-		local secret_path
-		secret_path="$(ls_secret_path "$secret_name")/secret.enc"
 		ls_secret_hmac_v2 "$secret_path" "$mac_key"
 	else
-		ls_secret_get "$secret_name" | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
+		local secret_val
+		if ! secret_val="$(ls_decrypt_sym "$secret_key" <"$secret_path")"; then
+			ls_log_error "ls_secret_hmac: Could not decrypt secret: $secret_name"
+			return 1
+		fi
+		printf '%s' "$secret_val" | ls_hmac "$(ls_secret_hmac_key "$secret_key")"
+	fi
+	return 0
+}
+
+# Function: ls_secret_hmac_ensure SECRET SECRET_KEY?
+# Ensures a signature file exists for `SECRET`, creating it when the hmac
+# option is enabled. Returns non-zero when a signature is required but cannot
+# be produced.
+function ls_secret_hmac_ensure { # SECRET SECRET_KEY?
+	local secret="$1"
+	local secret_key="${2:-}"
+	local secret_hmac_path
+	secret_hmac_path="$(ls_secret_hmac_path "$secret")"
+	if [ -e "$secret_hmac_path" ]; then
+		return 0
+	fi
+	if [ -z "$(ls_option hmac)" ]; then
+		return 0
+	fi
+	local hmac
+	if ! hmac="$(ls_secret_hmac "$secret" "$secret_key")"; then
+		return 1
+	fi
+	ls_log_warning "No hmac found for secret $secret: $secret_hmac_path"
+	ls_log_action "Creating HMAC for secret $secret at $secret_hmac_path"
+	if ! ls_secret_hmac_store "$secret_hmac_path" "$hmac"; then
+		ls_log_error "ls_secret_hmac_ensure: Could not store HMAC for secret $secret"
+		return 1
 	fi
 	return 0
 }
@@ -2056,6 +2157,12 @@ function ls_secret_get { # NAME PRIVKEY?
 		ls_log_error "ls_secret_get: Could not retrieve secret '$1', decrypted secret key is empty: $secret_key_path"
 		return 1
 	fi
+	# Make sure a signature exists before the version check below, so a missing
+	# HMAC is repaired consistently for API and CLI callers alike.
+	if ! ls_secret_hmac_ensure "$secret" "$secret_key"; then
+		ls_log_error "ls_secret_get: Could not ensure HMAC for secret: $secret"
+		return 1
+	fi
 	# Second step: check format version and execute dual-engine
 	local ver
 	ver="$(ls_secret_format_version "$secret")"
@@ -2117,25 +2224,39 @@ function ls_secret_get { # NAME PRIVKEY?
 
 # Function: ls_secret_verify
 # Verifies that the secret `NAME` decrypted using the `PRIVKEY` has a
-# matching HMAC with the one stored.
+# matching HMAC with the one stored. When the HMAC is missing and the hmac
+# option is enabled, a new signature is created.
 function ls_secret_verify { # NAME PRIVEY?
-	local store
-	store="$(ls_store)"
-	local secret_hmac_path="$store/secret/$1/secret.hmac"
-	# A missing HMAC is not a successful verification.
-	if [ -n "$(ls_option hmac)" ] && [ ! -e "$secret_hmac_path" ]; then
-		ls_log_warning "No hmac found for secret $1: $secret_hmac_path"
+	# HMAC verification is optional. This also lets callers use the same
+	# verification helper when the hmac option is disabled.
+	if [ -z "$(ls_option hmac)" ]; then
+		return 0
+	fi
+	local secret_hmac_path
+	secret_hmac_path="$(ls_secret_hmac_path "$1")"
+	local secret_key
+	if ! secret_key="$(ls_secret_key "$1" "${2:-}")"; then
+		ls_log_error "Verify could not retrieve secret key for $1"
 		return 1
 	fi
 	local hmac
-	if ! hmac="$(ls_secret_hmac "$1" "$(ls_secret_key "$1" "${2:-}")")"; then
+	if ! hmac="$(ls_secret_hmac "$1" "$secret_key")"; then
 		ls_log_error "Verify could not compute HMAC for secret $1"
 		return 1
-	elif ! cmp -s <(echo -n "$hmac") "$secret_hmac_path"; then
-		return 1
-	else
+	fi
+	if [ ! -e "$secret_hmac_path" ]; then
+		ls_log_warning "No hmac found for secret $1: $secret_hmac_path"
+		ls_log_action "Creating HMAC for secret $1 at $secret_hmac_path"
+		if ! ls_secret_hmac_store "$secret_hmac_path" "$hmac"; then
+			ls_log_error "Verify could not store HMAC for secret $1"
+			return 1
+		fi
 		return 0
 	fi
+	if ! cmp -s <(echo -n "$hmac") "$secret_hmac_path"; then
+		return 1
+	fi
+	return 0
 }
 
 # Function: ls_secret_remove SECRET
@@ -2879,14 +3000,14 @@ function ls_cli {
 			hmac="$(ls_secret_hmac "$secret")"
 			if [ ! -e "$hmac_path" ]; then
 				ls_log_action "Creating HMAC for secret $secret at $hmac_path"
-				echo -n "$hmac" >"$hmac_path"
+				ls_secret_hmac_store "$hmac_path" "$hmac"
 			elif [ "$(cat "$hmac_path")" != "$hmac" ]; then
 				ls_log_warning "Existing HMAC differs for secret $secret, updating."
-				echo -n "$hmac" >"$hmac_path"
+				ls_secret_hmac_store "$hmac_path" "$hmac"
 			fi
 		done
 		;;
-	## Integrity: verify [SECRET_EXPR...]  Verify HMACs without modifying secrets
+	## Integrity: verify [SECRET_EXPR...]  Verify or create HMACs
 	"verify")
 		local -a created=()
 		local -a valid=()
@@ -2900,11 +3021,9 @@ function ls_cli {
 			hmac_path="$(ls_secret_hmac_path "$secret_name")"
 			ls_log_progress "Verifying $secret_name"
 			if [ ! -e "$hmac_path" ]; then
-				# NOTE: Leaving this for reference
-				if hmac=$(ls_secret_hmac "$secret_name"); then
+				if hmac=$(ls_secret_hmac "$secret_name") && ls_secret_hmac_store "$hmac_path" "$hmac"; then
 					ls_log_progress "Created HMAC: $secret_name"
 					ls_log_action "Creating HMAC signature for secret: $secret_name"
-					echo -n "$hmac" >"$hmac_path"
 					created+=("$secret_name")
 				else
 					nokey+=("$secret_name")

@@ -26,6 +26,7 @@ LittleSecrets is a secure secrets management tool designed for individual and te
 - Secrets use AES-256-CBC with PBKDF2 and a random key
 - New secrets use Encrypt-then-MAC with HMAC-SHA256 over the ciphertext (format v2)
 - Legacy format v1 secrets remain readable and can be migrated with `upgrade`
+- With the `hmac` option enabled, a missing HMAC signature is recreated on read or verify
 - Each secret's encryption key is then encrypted with RSA-OAEP using each authorized user's public key
 - Supports both OpenSSH and OpenSSL key formats
 - No shared passwords or master keys required

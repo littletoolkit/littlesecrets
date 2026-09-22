@@ -55,6 +55,12 @@ function ls_secret_format_version { # SECRET_NAME
 }
 ```
 
+Because the signature file is also the format marker, a missing `secret.hmac`
+would otherwise force v2 ciphertext to be misread as v1. When a signature is
+being (re)created, `ls_secret_hmac_mode` disambiguates by probing whether the
+v2 derived encryption key ($K_{enc}$) decrypts `secret.enc`; if it does, the
+secret is treated as v2, else as v1.
+
 ---
 
 ## 3. Cryptographic Architecture (Format v2)
@@ -104,11 +110,32 @@ function ls_secret_format_version { # SECRET_NAME
   1. Decrypts `secret.enc` using legacy symmetric key.
   2. Verifies `secret.hmac` against decrypted plaintext.
 
-### 4.2 Write Configuration
+Legacy stores use two conventions that are handled transparently on read:
+
+1. **Passphrase representation**: v1 used the raw decoded key bytes directly as
+   the OpenSSL passphrase, whereas the current format uses the hexadecimal
+   representation of those bytes. `ls_decrypt_sym` first attempts the hex form
+   and falls back to the raw bytes.
+2. **RSA padding**: v1 recipient keys were produced with PKCS#1 v1.5 padding.
+   `ls_decrypt_asym` attempts OAEP-SHA256 first and falls back to PKCS#1 v1.5.
+
+### 4.2 Missing Signatures
+When the `hmac` option is enabled, a missing `secret.hmac` is treated as a
+repairable condition rather than an immediate failure: `ls_secret_hmac_ensure`
+recomputes the signature (using the format detected as above) and stores it via
+`ls_secret_hmac_store` before verification continues. The explicit `verify`
+command also creates missing signatures. Repairs are logged as warnings/actions
+so the change is visible to the user.
+
+> Note: for v1 secrets the MAC covers the plaintext, so a repaired signature
+> blesses the currently stored ciphertext. This is inherent to the v1 format;
+> migrating to v2 (`upgrade`) is recommended.
+
+### 4.3 Write Configuration
 - Environment variable: `LITTLESECRETS_FORMAT_VERSION=v1|v2` (default: `v2`).
 - CLI Flag: `littlesecrets --v1 add <secret>` or `littlesecrets --v2 add <secret>`.
 
-### 4.3 Migration / Upgrade Command
+### 4.4 Migration / Upgrade Command
 A new CLI command `littlesecrets upgrade [SECRET_EXPR...]`:
 1. Iterates over matching secrets.
 2. If already v2, reports `Already up to date: <secret>`.
@@ -126,4 +153,4 @@ A new CLI command `littlesecrets upgrade [SECRET_EXPR...]`:
 1. Tampered ciphertexts in v2 secrets are rejected before any cryptographic unpadding occurs.
 2. Legacy v1 secrets remain readable without requiring manual intervention.
 3. Master symmetric keys in v2 are always 256 bits, eliminating key truncation risks.
-4. All recipient keys continue to use RSA-OAEP with SHA-256 padding.
+4. Current recipient keys use RSA-OAEP with SHA-256 padding; legacy PKCS#1 v1.5 recipient keys are read for backward compatibility but never written.
