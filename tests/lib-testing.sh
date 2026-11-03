@@ -145,6 +145,10 @@ function test-start {
 	TEST_PATH="$(realpath "$(mktemp -d -p "$ORIGINAL_PATH" -t tmp.testing.XXX)")"
 	TMPDIR="$TEST_PATH"
 	export TMPDIR
+	# Never touch the developer's SSH keys or local trust database.
+	export LITTLESECRETS_KEY="$TEST_PATH/test-default-key"
+	export LITTLESECRETS_TRUST_DIR="$TEST_PATH/trust"
+	ssh-keygen -q -t rsa -b 2048 -N '' -f "$LITTLESECRETS_KEY"
 	TEST_NAME="${1:-$TEST_NAME}"
 	TEST_NAME="${TEST_NAME:-$FILENAME}"
 	test_log "${BLUE}>>> ${YELLOW}${BOLD}${TEST_NAME} ${RESET}${BLUE}${DIM}in '${TEST_PATH}'${RESET}"
@@ -220,6 +224,11 @@ function test-end {
 # Function(internal): test_cleanup
 # Peforms a cleanup
 function test_cleanup {
+	if declare -F ls_cleanup >/dev/null; then
+		# shellcheck disable=SC2034
+		local LS_TRAP_EXIT_PREVIOUS=""
+		ls_cleanup
+	fi
 	if [ -e "$TEST_PATH" ]; then
 		rm -rf "$TEST_PATH"
 	fi

@@ -38,7 +38,8 @@ test-expect "$NEW_SECRET_VALUE" "$SECRET_VALUE" "Secret value should not change 
 
 test-step "Test ensure fails when user doesn't have access"
 # Create a new private key that won't have access
-PRIVKEY=$(test-expect-success ls_privkey_new)
+PRIVKEY="$TEST_PATH/unrelated-key"
+ls_privkey_new "" >"$PRIVKEY"
 
 # Try to ensure the existing secret with the new key - should fail
 test-expect-failure ls_cli -k "$PRIVKEY" ensure test.secret

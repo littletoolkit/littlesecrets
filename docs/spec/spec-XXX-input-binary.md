@@ -1,23 +1,26 @@
-# Planned Binary Input
+# Binary Input and Output
 
-This is a design proposal and is not implemented. The current `--binary` flag
-controls base64 encoding of binary values in JSON output; it does not enable
-binary input for `add`.
+`add` and `set` read stdin byte-for-byte without a binary-input flag. Raw `get`
+preserves NUL bytes, arbitrary binary data, and trailing newlines:
 
-`littlesecrets` should support binary data using the `--binary` flag.
+```sh
+littlesecrets add certificate <certificate.bin
+littlesecrets get certificate >restored.bin
+cmp certificate.bin restored.bin
+```
 
-- `cat FILE | littlesecrets add --binary SECRET`
-- `littlesecrets get SECRET`
+Plaintext stays in private files rather than Bash variables, so command
+substitution cannot strip bytes inside the read/write path. If a caller captures
+raw output using `$(...)`, Bash still strips trailing newlines and cannot hold
+NUL bytes; redirect to a file when exact bytes matter.
 
-To do so:
+JSON output detects binary values and emits base64 with `"encoding":"base64"`.
+Text strings escape JSON control characters and preserve trailing newlines.
+`--binary` forces base64. `--text` requires valid UTF-8 and fails otherwise;
+without `iconv`, only ASCII can be validated as text. These flags control JSON
+output, not input interpretation.
 
-- `add` should use `ls_encode` to process the input when `binary` is set.
-- `add` without the `--binary` flag will strip NULL bytes, ideally we should warn of fail
-   when a binary input is detected. However, we don't want to store the input on the
-   file system as we don't want to leak the secret.
-- `get` should detect if the value uses the `@LS:` encoding marker and process it with `ls_decode` if it does
-
-Additionally:
-
-- `littlesecrets {encode,decode}` should respectively allow to ls_encode/decode
-  files.
+Shell export preserves text exactly using literal quoting, but rejects NUL
+bytes because shell variables cannot contain them. Both shell and JSON exports
+buffer the complete result and return a nonzero status with no stdout if any
+record fails authentication, decryption, or encoding.

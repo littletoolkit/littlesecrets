@@ -46,6 +46,8 @@ RETRIEVED_V1="$(ls_cli get secret.v1)"
 test-expect "$RETRIEVED_V1" "$MSG_V1" "Retrieved v1 secret matches plaintext exactly"
 
 test-step "Mixed repository export"
+test-expect-failure ls_cli export
+printf '%s' "$MSG_V2" | ls_cli --v2 set secret.v2 || test-fail "Could not replace damaged record from trusted plaintext"
 EXPORT_OUT="$(ls_cli export)"
 test-substring "$EXPORT_OUT" "SECRET_V1"
 test-substring "$EXPORT_OUT" "SECRET_V2"

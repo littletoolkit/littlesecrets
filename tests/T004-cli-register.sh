@@ -24,6 +24,8 @@ ssh-keygen -t rsa -b 4096 -f alice.rsa -P "" -C alice@machine
 test-case "Validate that the user host can be extracted from the key"
 test-expect "$(ls_user_name '' alice.rsa.pub)" "alice" "Public key user name extraction"
 test-expect "$(ls_user_host '' alice.rsa.pub)" "machine" "Public key host extraction"
+test-expect "$(ls_user_name 'explicit@host' alice.rsa.pub)" explicit "Explicit user overrides key metadata"
+test-expect "$(ls_user_host 'explicit@host' alice.rsa.pub)" host "Explicit host overrides key metadata"
 
 test-case "Register with explicit user"
 littlesecrets register alice alice.rsa.pub

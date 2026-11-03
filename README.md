@@ -15,14 +15,15 @@ secrets in local filesystems, Git repositories, and archives.
 LittleSecrets' design is based on the *Secure and convenient secret management
 in distributed computer systems* paper by Blazej Adamczyk. It uses RSA-OAEP
 key wrapping and AES-256-CBC with PBKDF2; new secrets use format v2's
-Encrypt-then-MAC construction with HMAC-SHA256.
+Encrypt-then-MAC construction with HMAC-SHA256. Signed records bind the store,
+secret name, ciphertext, and recipient envelopes to locally pinned public keys.
 
 ## Quick Start
 
-Global options (excerpt): `-k|--key`, `-u|--user`, `--host`, `-s|--store`, `-fjson|--format=json|-f json`, `--binary`, `--text`, `--v1`, `--v2`, `-q|--quiet`, `--verbose`, `--debug`.
+Global options (excerpt): `-k|--key`, `-u|--user`, `--host`, `-s|--store`, `-fjson|--format=json|-f json`, `--binary`, `--text`, `--v1`, `--v2`, `--allow-legacy`, `-q|--quiet`, `--verbose`, `--debug`.
 
 - `--binary` forces base64 encoding of secret values in JSON output (adds `encoding` field)
-- `--text` forces plain text emission of secret values in JSON output (suppresses `encoding` field)
+- `--text` forces UTF-8 text in JSON output and rejects invalid UTF-8
 - `--quiet` reports errors only; `--verbose` shows routine details and progress; `--debug` also shows external command output and stack traces
 
 Command data is written to stdout, while diagnostics and progress output are
@@ -45,20 +46,40 @@ and then
 littlesecrets init
 
 # Add a secret
-echo -n "SECRET!" | littlesecrets add my.little.secret
+printf '%s' 'SECRET!' | littlesecrets add my.little.secret
 
 # Retrieve the secret
 littlesecrets get my.little.secret
 
-# Register someone's RSA public key
-littlesecrets register alice alice.rsa.pubkey
+# Register and locally pin Alice's independently verified RSA public key
+littlesecrets register alice@laptop alice.rsa.pubkey
 
-# Alternatively, if you share the repository the other user can simply
-# do a `littlesecrets register` so that their key is registered.
+# Each checkout establishes its own pins; shared registrations alone
+# do not establish trust. Readers also pin the signers of their records.
 
 # Grant access to the secret
 littlesecrets grant my.little.secret alice
 ```
+
+### Existing stores
+
+Unsigned historical v1/v2 records migrate automatically on authenticated access:
+just run `littlesecrets get SECRET`. A single-recipient store needs no setup;
+shared records initialize missing recipient pins from public-key registrations
+in the accepted Git checkout, without separate local registration. Migration
+verifies the existing HMAC, rotates the key, preserves recipients, and commits
+the signed record before returning plaintext. `littlesecrets upgrade '*'` is
+available for eager migration; `--allow-legacy` is no longer needed.
+
+Use a trusted historical checkout, since old HMACs do not bind names or recipient
+lists. Missing or invalid tags and damaged signed records fail without repair.
+The resulting changes remain uncommitted for Git review. Older clients cannot
+read the new envelopes. Signed stores on a new machine
+still require explicit initialization and signer pins.
+
+Pins live outside the shared store under
+`${XDG_STATE_HOME:-$HOME/.local/state}/littlesecrets`, or `LITTLESECRETS_TRUST_DIR`.
+See the [manual](docs/manual.md#trust-and-migration) for migration and recovery.
 
 ## Use Cases
 
@@ -91,13 +112,17 @@ work for you, then its simplicity and ease of use should make it attractive.
 - *Support for multiple keys per user*: works for human user working across multiple
   machines.
 
-- *Revocation mechanisms*: secrets can be revoked and rotated.
+- *Revocation*: removes matching envelopes and rotates the encryption key,
+  including after recipient deregistration.
 
 - *Strong Encryption*: symmetric encryption is AES-256-CBC with PBKDF2 and
   format v2 authenticates ciphertext using Encrypt-then-MAC with HMAC-SHA256.
 
-- *Stateless Design*: no service or authentication is required, we rely on the
-   cryptographic properties of keys.
+- *No server required*: cryptographic keys and a private local trust database
+  provide authentication.
+
+- *Binary-safe*: stdin and raw output preserve all bytes; JSON supports base64
+  for binary values and shell export rejects values it cannot represent.
 
 Some caveats of the cryptographic model:
 
@@ -105,7 +130,8 @@ Some caveats of the cryptographic model:
   the secrets. If a key is compromised, all the secrets that have been granted
   are potentially compromised.
 
-- We assume 2048bit for RSA keys, although this can be parameterised.
+- Use RSA keys of at least 2048 bits; generated keys are 4096-bit. Each new
+  record uses a fresh 32-byte master key, independent of RSA key size.
 
 - We use AES-256-CBC (encryption) and HMAC (authentication). AES-256-GCM would
   be better, but is not available for good reasons
@@ -113,19 +139,23 @@ Some caveats of the cryptographic model:
   also see [this openssl issue](https://github.com/openssl/openssl/issues/12220)
   and the [corresponding discussion](https://github.com/openssl/openssl/discussions/22269) for more detail).
 
-- Once a secret is granted to a user, the secret should be considered known.
-  As a result, when you revoke access to a secret, you should also rotate it.
+- Once a secret is granted to a user, its value should be considered known.
+  Revocation rotates the encryption key; also rotate the external password or
+  token at its source to invalidate a former recipient's knowledge. Old copies
+  and keys cannot be erased remotely.
 
-- Due to its stateless design, there is no audit log. Instead, we recommend
-  to store the secrets in a Git repository for auditing.
+- There is no built-in freshness counter or audit log. An old valid signed
+  record can be replayed; use trusted Git history for auditing and freshness.
 
 And some more general caveats for security:
 
-- The CLI tool uses the shell and temporary files (cleanup, with appropriate
-  permissions), which offers a window for a local attack.
+- The CLI uses private temporary files and owned locks. Ordinary failures are
+  rolled back when possible; SIGKILL or power loss can require manual recovery
+  of retained backups, locks, and temporary files.
 
-- The CLI tool does not do strong input validation, it's meant to be run by
-  yourself directly.
+- The local account, executables, filesystem, and trust database must be trusted.
+  Store/trust paths reject symlinks and special files. Recipients and signers
+  must be independently verified before local registration.
 
 ## References
 

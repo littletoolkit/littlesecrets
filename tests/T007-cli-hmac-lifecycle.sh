@@ -31,12 +31,12 @@ test-step "Verify HMAC is valid"
 EXPECTED_HMAC1=$(ls_secret_hmac test.secret)
 test-expect "$HMAC1" "$EXPECTED_HMAC1" "HMAC matches expected value"
 
-test-step "Recreate missing HMAC during verification"
+test-step "Missing HMAC fails closed without repairing the record"
 rm .littlesecrets/secret/test.secret/secret.hmac
-EXPORTED_SECRET="$(ls_secret_export test.secret)"
-test-substring "$EXPORTED_SECRET" "export TEST_SECRET='${SECRET1}'" || test-fail "Could not export secret with missing HMAC"
-test-exist .littlesecrets/secret/test.secret/secret.hmac
-test-expect "$(cat .littlesecrets/secret/test.secret/secret.hmac)" "$EXPECTED_HMAC1" "Recreated HMAC matches expected value"
+test-expect-failure ls_secret_get test.secret
+test-expect-failure ls_secret_export test.secret
+test-expect-failure ls_cli verify test.secret
+test-expect-failure test -e .littlesecrets/secret/test.secret/secret.hmac
 
 test-step "Update secret with new content"
 echo -n "$SECRET2" | ls_secret_write test.secret || test-fail "Could not update secret"
@@ -53,16 +53,12 @@ test-step "Verify updated HMAC is valid"
 EXPECTED_HMAC2=$(ls_secret_hmac test.secret)
 test-expect "$HMAC2" "$EXPECTED_HMAC2" "Updated HMAC matches expected value"
 
-test-step "Test secret creation without HMAC option"
+test-step "Authentication cannot be disabled through the legacy options variable"
 export LITTLESECRETS_OPTIONS=""
 echo -n "$SECRET1" | ls_secret_add test.secret.no.hmac || test-fail "Could not add secret without HMAC"
 
-test-step "Verify no HMAC file is created without option"
-if [ -e .littlesecrets/secret/test.secret.no.hmac/secret.hmac ]; then
-	test-fail "HMAC file should not exist without option"
-else
-	test-ok "No HMAC file created without option"
-fi
+test-exist .littlesecrets/secret/test.secret.no.hmac/secret.hmac
+test-expect-success ls_secret_verify test.secret.no.hmac
 
 test-step "Re-enable HMAC and update existing secret"
 export LITTLESECRETS_OPTIONS="hmac"

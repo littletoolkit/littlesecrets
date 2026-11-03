@@ -1,156 +1,164 @@
-# Format v2 Specification: Authenticated Encryption (Encrypt-then-MAC) & Format Migration
+# Signed Records, Format v2, and Migration
 
-## 1. Overview & Motivation
+## Record layout
 
-LittleSecrets v1 uses AES-256-CBC alongside a detached HMAC signature (`secret.hmac`). In v1, the HMAC is computed over the **decrypted plaintext** after decryption has already taken place (MAC-then-Decrypt).
+Both newly written v1 and v2 records use the signed record-3 envelope. The
+`v1`/`v2` value identifies the symmetric encryption/HMAC scheme, not whether a
+record is signed. Older clients cannot consume the new recipient envelopes.
 
-While functional, this approach has cryptographic and operational drawbacks:
-1. **Decrypt-before-Verify Malleability**: Decrypting unauthenticated ciphertext exposes the CBC mode PKCS#7 padding to potential padding oracle attacks if error responses differ.
-2. **Buffer Truncation**: Capturing plaintext into shell variables (`$(cat /dev/stdin)`) strips trailing newlines and truncates binary null bytes (`\x00`).
-3. **OpenSSL CLI Constraints**: Standard OpenSSL CLI `enc` commands do not support GCM/AEAD ciphers (`enc: AEAD ciphers not supported`). Therefore, true Authenticated Encryption in portable shell scripts is achieved via the provably secure **Encrypt-then-MAC (EtM)** composition with AES-256-CBC and HMAC-SHA256.
-
-Format v2 introduces:
-- **Format Identification**: Automatic detection of v1 vs. v2 secrets.
-- **Encrypt-then-MAC (EtM)**: Verifying the MAC over the ciphertext *before* attempting decryption.
-- **Independent Key Derivation**: Splitting a master symmetric key into independent encryption ($K_{enc}$) and authentication ($K_{mac}$) keys.
-- **Full Backward Compatibility**: Seamless, transparent reading of v1 legacy secrets alongside v2 secrets.
-- **Upgrade Path**: A dedicated `upgrade` CLI command to migrate v1 secrets to v2 without user friction.
-
----
-
-## 2. Format Identification & Detection
-
-Each secret directory `.littlesecrets/secret/<name>/` stores:
-- `secret.enc`: The symmetrically encrypted secret payload.
-- `secret.hmac`: The cryptographic integrity signature.
-- `<user>@<host>.key`: The recipient's RSA-OAEP encrypted symmetric master key.
-
-### Format Distinctions
-
-| Attribute | Format v1 (Legacy) | Format v2 (Modern) |
-|---|---|---|
-| **HMAC File Prefix** | None (64 hex characters) | `v2:etm:<64_hex_characters>` |
-| **MAC Target** | Plaintext (`message = decrypted_secret`) | Ciphertext (`message = secret.enc`) |
-| **Symmetric Cipher** | AES-256-CBC with PBKDF2 | AES-256-CBC with PBKDF2 ($K_{enc}$) |
-| **Key Derivation** | Single key used for cipher & MAC | Dual independent keys via SHA-512 |
-| **Verification Order** | Decrypt $\rightarrow$ Verify Plaintext MAC | Verify Ciphertext MAC $\rightarrow$ Decrypt |
-
-### Detection Heuristic
-
-Format detection is performed automatically by inspecting `secret.hmac`:
-```bash
-function ls_secret_format_version { # SECRET_NAME
-    local hmac_path="$(ls_secret_hmac_path "$1")"
-    if [ ! -e "$hmac_path" ]; then
-        echo "v1"
-        return 0
-    fi
-    local prefix
-    prefix="$(head -c 7 "$hmac_path" 2>/dev/null || true)"
-    if [ "$prefix" = "v2:etm:" ]; then
-        echo "v2"
-    else
-        echo "v1"
-    fi
-}
+```
+.littlesecrets/store.id                  # 32 lowercase hex characters + LF
+.littlesecrets/secret/<name>/
+  secret.format                        # v1 or v2, no trailing LF
+  secret.signer                        # user@host, no trailing LF
+  secret.enc                           # OpenSSL salted AES-CBC ciphertext
+  secret.hmac                          # Mandatory authentication tag
+  secret.sig                           # Binary RSA/SHA-256 signature
+  <user>@<host>.key                     # Binary RSA-OAEP-SHA256 envelope
 ```
 
-Because the signature file is also the format marker, a missing `secret.hmac`
-would otherwise force v2 ciphertext to be misread as v1. When a signature is
-being (re)created, `ls_secret_hmac_mode` disambiguates by probing whether the
-v2 derived encryption key ($K_{enc}$) decrypts `secret.enc`; if it does, the
-secret is treated as v2, else as v1.
+## Identity and signature
 
----
+`init` generates a 16-byte random store identity and pins it outside the shared
+store. The record context is the lowercase hexadecimal SHA-256 digest of:
 
-## 3. Cryptographic Architecture (Format v2)
+```
+ASCII("LittleSecrets record 3") || NUL || ASCII(store.id without LF) || NUL
+    || ASCII(secret name) || NUL
+```
 
-### 3.1 Key Generation and Derivation
-1. **Master Symmetric Key ($K_{sym}$)**:
-   A 32-byte (256-bit) cryptographically secure random key generated in hexadecimal format:
-   $$K_{sym} = \text{openssl rand -hex 32}$$
-   Encapsulated with `@LS:` base64 encoding for storage in recipient key envelopes.
+Recipient envelopes encrypt the exact ASCII string:
 
-2. **Dual Key Derivation**:
-   Using SHA-512 to derive two non-overlapping 256-bit keys:
-   $$K_{derived} = \text{SHA512}(K_{sym})$$
-   - **Encryption Key ($K_{enc}$)**: First 32 bytes (64 hex characters)
-     $$K_{enc} = K_{derived}[0..63]$$
-   - **Authentication Key ($K_{mac}$)**: Second 32 bytes (64 hex characters)
-     $$K_{mac} = K_{derived}[64..127]$$
+```
+LS3:<64-character context hash>:<master-key representation>
+```
 
-### 3.2 Encryption & Integrity (Encrypt-then-MAC)
-1. Plaintext $P$ is encrypted via AES-256-CBC:
-   $$C = \text{AES-256-CBC-Encrypt}(K_{enc}, P)$$
-   Output is written directly to `secret.enc`.
-2. HMAC is computed directly over the ciphertext file `secret.enc`:
-   $$T = \text{HMAC-SHA256}(K_{mac}, C)$$
-3. The signature is written to `secret.hmac` with format prefix:
-   $$\text{secret.hmac} = \text{"v2:etm:"} \parallel T$$
+The default master-key representation is `@LS:` followed by base64 of 32 random
+bytes. RSA encryption uses `pkeyutl` with `rsa_padding_mode:oaep` and
+`rsa_oaep_md:sha256` (MGF1 uses the same digest).
 
-### 3.3 Decryption & Verification (Verify-then-Decrypt)
-1. Recipient recovers $K_{sym}$ using their RSA private key with OAEP padding.
-2. Derives $K_{mac}$ and $K_{enc}$ from $K_{sym}$.
-3. Computes expected HMAC over `secret.enc` using $K_{mac}$.
-4. Compares with stored signature in `secret.hmac` using constant-time comparison (`cmp -s`).
-5. **Fail-Fast**: If the signature does not match, decryption aborts immediately. `secret.enc` is never parsed or passed to the AES decryptor.
-6. Decrypts `secret.enc` using $K_{enc}$.
+The signed payload starts with `LittleSecrets record 3:<context hash>\n`.
+It then includes these files in order:
 
----
+1. `secret.format`
+2. `secret.signer`
+3. `secret.hmac`
+4. `secret.enc`
+5. All recipient `*.key` files, sorted using the C locale
 
-## 4. Backwards Compatibility & Dual Engine
+Each field is framed as `<basename>:<decimal byte length>\n` followed by the
+exact file bytes, with no extra separator. Names are validated filesystem
+components. The signature excludes `secret.sig` itself and is produced with
+`openssl dgst -sha256 -sign`, using RSA's PKCS#1 v1.5 signature encoding.
+This signature padding is distinct from the OAEP encryption padding.
 
-### 4.1 Transparent Read Pipeline
-`littlesecrets get <secret>` automatically branches:
-- **v2 Secret Detected**:
-  1. Derives $K_{mac}$ from decrypted symmetric key.
-  2. Verifies `secret.hmac` against `secret.enc`.
-  3. Decrypts `secret.enc` using $K_{enc}$.
-- **v1 Secret Detected**:
-  1. Decrypts `secret.enc` using legacy symmetric key.
-  2. Verifies `secret.hmac` against decrypted plaintext.
+Verification uses the signer's independently pinned local public key, never an
+unverified key from the shared store. The signature covers every recipient
+envelope, preventing envelope swaps and recipient changes by an untrusted store
+editor. The context prevents moving a valid record to another secret name or
+store identity. Reads also require the decrypted envelope's context to match.
 
-Legacy stores use two conventions that are handled transparently on read:
+## Symmetric schemes
 
-1. **Passphrase representation**: v1 used the raw decoded key bytes directly as
-   the OpenSSL passphrase, whereas the current format uses the hexadecimal
-   representation of those bytes. `ls_decrypt_sym` first attempts the hex form
-   and falls back to the raw bytes.
-2. **RSA padding**: v1 recipient keys were produced with PKCS#1 v1.5 padding.
-   `ls_decrypt_asym` attempts OAEP-SHA256 first and falls back to PKCS#1 v1.5.
+Let `K` be the decoded master-key bytes. Hash outputs below are lowercase hex
+ASCII strings unless otherwise stated.
 
-### 4.2 Missing Signatures
-When the `hmac` option is enabled, a missing `secret.hmac` is treated as a
-repairable condition rather than an immediate failure: `ls_secret_hmac_ensure`
-recomputes the signature (using the format detected as above) and stores it via
-`ls_secret_hmac_store` before verification continues. The explicit `verify`
-command also creates missing signatures. Repairs are logged as warnings/actions
-so the change is visible to the user.
+| Property | v1 | v2 (default) |
+|---|---|---|
+| Encryption input key | `K` | First 64 hex characters of `SHA512(K)` |
+| HMAC key | 64 hex characters of `SHA256(K)` | Last 64 hex characters of `SHA512(K)` |
+| HMAC target | Exact plaintext bytes | Exact `secret.enc` bytes |
+| Tag | 64 uppercase hex characters | `v2:etm:` + 64 uppercase hex characters |
 
-> Note: for v1 secrets the MAC covers the plaintext, so a repaired signature
-> blesses the currently stored ciphertext. This is inherent to the v1 format;
-> migrating to v2 (`upgrade`) is recommended.
+The encryption helper converts its input key bytes to lowercase hex ASCII and
+passes that string via a file descriptor to
+`openssl aes-256-cbc -md sha512 -salt -pbkdf2`. In v2 this deliberately means
+hex-encoding the ASCII encryption-key substring, preserving the existing v2
+cipher convention. HMAC keys are used as ASCII bytes, not decoded from hex.
+Tags have no trailing newline.
 
-### 4.3 Write Configuration
-- Environment variable: `LITTLESECRETS_FORMAT_VERSION=v1|v2` (default: `v2`).
-- CLI Flag: `littlesecrets --v1 add <secret>` or `littlesecrets --v2 add <secret>`.
+The HMAC implementation uses SHA-256's standard inner/outer-pad construction
+without placing the key in external process arguments. The default master key
+contains 256 random bits; its size is independent of RSA key size.
 
-### 4.4 Migration / Upgrade Command
-A new CLI command `littlesecrets upgrade [SECRET_EXPR...]`:
-1. Iterates over matching secrets.
-2. If already v2, reports `Already up to date: <secret>`.
-3. If v1:
-   - Decrypts the secret using the v1 engine.
-   - Generates a fresh 32-byte symmetric key.
-   - Encrypts via v2 Encrypt-then-MAC.
-   - Re-encrypts user recipient keys for all authorized users.
-   - Rewrites `secret.enc`, recipient key files, and `secret.hmac`.
-   - Reports `Upgraded: <secret> (v1 -> v2)`.
+## Read pipeline
 
----
+Authenticated access first checks for a genuine unsigned legacy record and
+migrates it using the procedure below. Signed records then follow this pipeline:
 
-## 5. Security Invariants
-1. Tampered ciphertexts in v2 secrets are rejected before any cryptographic unpadding occurs.
-2. Legacy v1 secrets remain readable without requiring manual intervention.
-3. Master symmetric keys in v2 are always 256 bits, eliminating key truncation risks.
-4. Current recipient keys use RSA-OAEP with SHA-256 padding; legacy PKCS#1 v1.5 recipient keys are read for backward compatibility but never written.
+1. Take a per-secret lock and copy the record into a private snapshot.
+2. Check the locally pinned store identity and signer key.
+3. Verify the signature, including format metadata and all recipient envelopes.
+4. Decrypt the caller's recipient envelope and check its context.
+5. For v2, verify the ciphertext HMAC before AES decryption. For v1, decrypt
+   privately and verify the plaintext HMAC before returning any bytes.
+6. Return plaintext from the authenticated snapshot, not a reopened store file.
+
+Missing, empty, malformed, or invalid authentication data is fatal. No read,
+`hash`, `verify`, or `export` operation repairs it. Automatic migration only
+rewrites records after their existing HMAC verifies. `LITTLESECRETS_OPTIONS` cannot
+disable verification. Tag comparison uses `cmp -s`, which is **not** claimed to
+be constant-time. This is a local CLI, not a remotely exposed decryption oracle.
+
+Signatures establish authenticity under a local pin, not freshness: replaying
+an older valid record remains possible. Names, recipients, and store listings
+are visible metadata. There is no authenticated store-wide manifest.
+
+## Writes, grants, and revocation
+
+`add`/`set` creates a fresh master key, ciphertext, tag, recipient envelopes, and
+signature in a staging directory. A per-secret lock covers staging and
+publication; the previous record is retained for rollback on ordinary failure.
+`ensure` checks existence under the same lock and refuses damaged records.
+
+`grant` authenticates the existing record before rewrapping its key. Recipient
+public keys must match local pins. It then signs the entire updated record.
+
+`revoke` enumerates actual recipient envelopes, including deregistered users.
+It authenticates the old record, creates a fresh master key, and re-encrypts as
+v2 for every remaining pinned recipient. Missing pins fail the whole update;
+recipients are never silently dropped. The last recipient cannot be revoked.
+Key rotation cannot erase plaintext or keys already copied by former recipients.
+
+See `spec-004-store.md` for locking, trust storage, and recovery limits.
+
+## Automatic migration
+
+Historical unsigned v1/v2 records migrate on authenticated access through `get`,
+`ensure`, `hash`, `verify`, `export`, `grant`, and `revoke`, and through the shell
+key/HMAC accessors. `upgrade` offers eager migration. The `--allow-legacy` flag
+remains accepted for compatibility but is unnecessary for these commands.
+
+A genuine legacy record has none of `secret.sig`, `secret.format`, or
+`secret.signer`, and its decrypted envelope must not start with `LS3:`. A signed
+record with a deleted signature or stripped metadata is rejected rather than
+automatically re-signed. Signed records never enable legacy decryption fallbacks.
+
+Migration:
+
+1. Takes a private snapshot and verifies the existing HMAC using the caller's
+   private key. Historical PKCS#1 v1.5 encryption padding and raw-passphrase
+   fallbacks are available only on this legacy path.
+2. Initializes/pins the store identity if needed and derives the caller's public
+   key pin from the local private key. Existing identity pins must still match.
+3. Retains existing recipient pins and initializes missing pins from public-key
+   registrations in the accepted Git checkout. Missing, invalid, or symlinked
+   registration files fail migration without replacing the record.
+4. Takes the record transaction lock and rechecks the current generation. If
+   another reader has migrated it, verifies that signed record instead.
+5. Otherwise verifies/decrypts the current legacy record privately, creates a
+   fresh master key, and rewrites every recipient envelope as signed v2.
+6. Publishes the complete record before allowing plaintext or key output.
+
+This makes legacy stores migrate without separate recipient registration.
+The accepted Git checkout supplies trust for the initial public-key registrations;
+migration leaves uncommitted changes for review. A failed attempt may initialize
+local pins, but leaves the original record intact. A signed store on
+a new machine still requires explicit initialization and signer registration.
+
+The initial legacy checkout must be trusted: its HMAC authenticates its value,
+not its secret name or recipient list. Migration cannot retroactively prove
+those historical associations. Missing or invalid tags require a trusted backup
+or replacement from trusted plaintext. Already signed v2 records are verified
+and left unchanged. `hash` and `verify` never recreate missing authentication
+data on a signed record.

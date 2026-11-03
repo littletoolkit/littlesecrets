@@ -5,8 +5,10 @@ implemented `export` command emits shell assignments by default or JSON with
 `--format=json`; archive, SQLite, AWS, and DynamoDB exports are not currently
 implemented.
 
-Exporting secrets is meant to only support a read-only use case. In that regards, only the
-`.littlesecrets/secret/` folder is necessary. Additionally, exporting can be limited to only
+Exporting secrets is meant to support a read-only use case. An encrypted archive
+would need the store identity and complete signed records, plus independently
+established signer pins on the receiving machine. Removing recipients from a
+signed record requires re-signing it. Additionally, exporting could be limited to
 a subset of secrets and a subset of users. For instance
 
 ```

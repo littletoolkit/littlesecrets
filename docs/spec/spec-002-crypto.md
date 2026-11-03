@@ -1,99 +1,82 @@
 # Cryptography
 
-The core cryptography works as such:
+LittleSecrets uses RSA keypairs for wrapping and signing, and AES-256-CBC with
+PBKDF2 plus HMAC-SHA256 for secret values. Generated RSA keys are 4096-bit;
+existing RSA keys should be at least 2048-bit. OpenSSH and OpenSSL RSA formats
+are supported; passphrase-protected private keys are not.
 
-- Users register their SSH (RSA) public key in the shared secrets.
-- A secret is encrypted using a randomly generated key, which is kept secret, and then stored.
-- Before being stored, the key will be encrypted with the user's registered SSH (RSA) public key.
-- The user can grant other user's access to the secret by decrypting the secret's encryption key,
-  and encrypting it with the other user's SSH public key.
-- A secret can be revoked by removing the encrypted secret, or re-encrypting it.
-- Format v1 uses an HMAC over the decrypted secret for integrity.
-- Format v2 derives independent encryption and authentication keys and uses
-  Encrypt-then-MAC: HMAC-SHA256 covers the ciphertext before decryption.
+## Master keys and encryption
 
-Note that:
+Every newly written record gets 32 random master-key bytes, represented as
+`@LS:` plus base64. Key size is independent of the RSA modulus; the historical
+`LITTLESECRETS_KEYSIZE` setting is unused. Custom keys supplied through the shell
+API must still fit the recipient's OAEP capacity together with the context.
 
-- Users may have multiple SSH keys associated with their name, for instance, when using different computer.
-- Users may have on a given machine multiple SSH keypairs, using different formats, like RSA or ECDSA.
+For v2, SHA-512 of the decoded master key supplies two non-overlapping halves:
+one encryption input and one HMAC key, represented as lowercase hex ASCII.
+The encryption helper hex-encodes its input and supplies it via a file
+descriptor to:
 
-In practice:
-
-- Secrets are symmetrically encrypted using AES-256-CBC and a random key. Its
-  maximum length is derived from `LITTLESECRETS_KEYSIZE`, which defaults to
-  2048 for RSA-OAEP payload sizing.
-- Secret encryption key is asymmetrically encrypted using an RSA keypair
-- An RSA private key either in SSH or PEM (openssl) format
-- An RSA public key in PEM (openssl) format, optional as it can be derived from the private key
-- An secret encryption key no longer than what the RSA keypair can encrypt
-- Generated SSH and OpenSSL RSA keys are 4096-bit.
-
-Some considerations of this system:
-
-- AES-256-CBC is combined with HMAC using Encrypt-then-MAC in format v2 because
-  the GCM version is not available through the portable `openssl` CLI.
-- Format v1 uses the encryption key in base64 format for HMAC primarily due to
-  shell implementation limitations; this has no effect on entropy.
-- Secrets and key storage should be version controlled using a system like git, which
-  then provides auditability.
-
-In shell, the symmetric encryption works like so:
-
-```
-# Outputs an encryption key, no longer than what the RSA keypair can encrypt
-openssl rand 214 # 2048/8 - 42
-
-# Outputs the encrypted secret using the encryption key
-openssl aes-256-cbc -md sha512 -salt -pbkdf2 -in /dev/stdin -out /dev/stdout -pass "file:$SECRET_ENC_KEY_PATH"
-
-# Outputs the decrypted secret using the encryption key
-openssl aes-256-cbc -md sha512 -salt -pbkdf2 -d -in /dev/stdin -out /dev/stdout -pass "file:$SECRET_ENC_KEY_PATH"
+```sh
+openssl aes-256-cbc -md sha512 -salt -pbkdf2 -pass fd:3
 ```
 
-In shell, the management of RSA keys works like so:
+The HMAC covers the exact salted ciphertext and is verified before AES
+decryption. The v1 scheme instead uses the master key for encryption and a
+hex-ASCII SHA-256 digest of that key for the plaintext HMAC. Plaintext is held
+privately until all required authentication succeeds.
 
-```
-# Create an SSH/RSA private key
-ssh-keygen -q -t rsa -b 4096 -N "" -f "$PRIVATE_KEY_PATH"
+The HMAC implementation uses the standard SHA-256 inner/outer-pad construction
+without putting keys in external process arguments. Shell builtins and private
+files handle key material. Supplying CLI values as arguments still exposes them
+to process listings and shell history; prefer stdin.
 
-# Convert (in place) an SSH/RSA private key to OpenSSL/RSA private key
-ssh-keygen -q -p -m pem -N '' -f "$PRIVATE_KEY_PATH"
+## Recipient envelopes and signatures
 
-# Outputs an SSH/RSA public key to OpenSSL/RSA public key
-ssh-keygen -e -m PKCS8 -f "$PUBLIC_KEY_PATH"
+Each recipient gets an RSA-encrypted envelope containing the master-key
+representation and a context digest binding the store identity and secret name:
 
-# Create an OpenSSL/RSA private key
-openssl genrsa -out "$PRIVATE_KEY_PATH" 4096
-
-# Outputs an OpenSSL/RSA public key from an OpenSSL/RSA private key
-openssl rsa -in "$PRIVATE_KEY_PATH" -pubout
-```
-
-The asymmetric encryption works like so, where what is encrypted is the key
-used to symmetrically encrypt the secret.
-
-```
-# Outputs the encrypted secret using the given OpenSSL/RSA public key
-openssl pkeyutl -encrypt -pubin -inkey "$PUBLIC_KEY_PATH" -in "$SECRET_ENC_KEY_PATH" -out /dev/stdout
-
-# Outputs the decrypted secret using the given OpenSSL/RSA private key
-openssl pkeyutl -decrypt -inkey "$PRIVATE_KEY_PATH" -in "$SECRET_ENC_KEY_PATH" -out /dev/stdout
+```sh
+openssl pkeyutl -encrypt -pubin -inkey "$PUBLIC_KEY_PATH" \
+  -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+  -in "$ENVELOPE_PATH" -out "$WRAPPED_KEY_PATH"
 ```
 
-Legacy v1 HMAC calculation uses the following key handling. For format v1,
-HMAC integrity validation works using the decrypted *secret* and
-the *secret encryption key*. Format v2 instead authenticates the encrypted
-`secret.enc` file with a derived authentication key before decryption.
+Records also carry an RSA/SHA-256 signature covering context, format, signer,
+ciphertext, HMAC, and all recipient envelopes. Signing and verification use:
 
-```
-# Computes a base64 version of the encryption key so that it can be HMAC'ed
-SECRET_HMAC_KEY="$(echo -n "$SECRET_ENC_KEY" | openssl base64 -A)"
-
-# Computes the HMAC of the secret (decrypted) using the HMAC key.
-# LittleSecrets uses the standard HMAC inner/outer-pad construction with
-# `openssl dgst -sha256`, so the key is never passed in command arguments.
+```sh
+openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" -out "$SIGNATURE_PATH" "$PAYLOAD_PATH"
+openssl dgst -sha256 -verify "$PINNED_PUBLIC_KEY_PATH" \
+  -signature "$SIGNATURE_PATH" "$PAYLOAD_PATH"
 ```
 
-Note that in the shell based implementation we:
-- Temporary files are set with strict modes (`600`) and are cleaned up
-- Avoid passing secrets in the command arguments or in the environment, to ensure there's no leaking.
+The public key must come from the local trust database, not an unverified shared
+registration. Signatures use RSA PKCS#1 v1.5 signature encoding; encryption uses
+OAEP-SHA256. See `spec-011-format-v2.md` for exact byte framing and key encodings.
+
+## Sharing and limits
+
+Grant authenticates the source record before wrapping its key for pinned
+recipients. Revoke rotates the master key and re-encrypts for the remaining
+recipients. It cannot erase a former recipient's plaintext or historical keys;
+external credentials must also be rotated at their source.
+
+Authentication is mandatory. Missing tags are never regenerated. Unsigned
+historical records migrate automatically on access, using historical RSA
+padding and raw-passphrase fallbacks only while verifying the old HMAC.
+Signed records never use those fallbacks. Missing signed metadata and an `LS3:`
+envelope without its signature are errors, not legacy migration candidates.
+
+Legacy migration authenticates the value before initializing local identity
+and caller-key pins. Missing pins for other recipients are initialized from
+public-key registrations in the accepted Git checkout; existing pins are retained.
+Historical HMACs cannot authenticate names or recipient lists, so the initial
+legacy checkout must be trusted. Migration cannot retroactively supply that
+missing evidence.
+
+The shell implementation uses private temporary files, owned locks, staged
+writes, and verified snapshots. It trusts the local account, executables, and
+trust database. Tag comparison uses `cmp -s` and has no constant-time guarantee.
+Signatures do not detect replay of an old valid record; trusted version history
+is needed to establish freshness. The CLI is not a network decryption service.

@@ -15,7 +15,7 @@ echo "$HELP_OUTPUT" | grep -q '^  -h, --help                 Show this help mess
 echo "$HELP_OUTPUT" | grep -q "^  --host HOST                Set the host name (default: [\$]HOSTNAME)$" || test-fail "host option should be aligned"
 echo "$HELP_OUTPUT" | grep -q '^Meta:$' || test-fail "help should contain command groups"
 echo "$HELP_OUTPUT" | grep -q '^  help \[COMMAND\][[:space:]]\+Show help for a command$' || test-fail "commands should be grouped and aligned"
-echo "$HELP_OUTPUT" | grep -q '^  hash \[SECRET_EXPR\.\.\.\][[:space:]]\+Create or update HMACs$' || test-fail "hash syntax should be normalized"
+echo "$HELP_OUTPUT" | grep -q '^  hash \[SECRET_EXPR\.\.\.\][[:space:]]\+Print authenticated HMACs$' || test-fail "hash syntax should be normalized"
 echo "$HELP_OUTPUT" | grep -q '^  info[[:space:]]\+Show the active and ancestor stores$' || test-fail "last command should be formatted"
 
 test-step "Render command-specific help"
